@@ -316,6 +316,21 @@ ok(q[0][1] === 7 && q[1][1] === 14, '線分の板で、その線分の長さ（7
   ok(on1 && off1 && off2 && JSON.stringify(added) === JSON.stringify([[null, 5]]), 'ルートのモーダル: 選んだラベルはもう一度押すか「ラベルなし」で外れる → 長さだけのルート', { on1, off1, off2, added });
 }
 await shot('m4_smoke_route_len');
+// 線・ルートを動かす: ノードは線の下でも掴める。選んだ線は骨ごと動く
+{
+  await page.evaluate(() => { self.__min.setTool('select'); self.__min.app.selection = null; self.__min.renderAll(); });
+  const pos = () => page.evaluate(() => { const st = self.__min.store.state; const p = st.pickups.find((x) => x.kind === 'line'); const s0 = st.segments.find((x) => x.id === p.path[0]); return s0.points.map((q) => q.join(',')).join(' '); });
+  await drag(550, 320, 560, 330);
+  await page.waitForTimeout(150);
+  const a1 = await pos();
+  await click(470, 320);
+  await page.waitForTimeout(150);
+  const sel = await page.evaluate(() => self.__min.app.selection);
+  await drag(470, 320, 470, 340);
+  await page.waitForTimeout(150);
+  const a2 = await pos();
+  ok(a1 === '400,320 560,330' && sel && sel.kind === 'pickup' && a2 === '400,340 560,350', '線の端のノードを引く／線を選んで引くと骨ごと動く', { a1, sel, a2 });
+}
 
 console.log('\nproblems:', problems.length ? problems : 'なし');
 console.log(failed ? 'FAILED ' + failed : 'ALL OK');

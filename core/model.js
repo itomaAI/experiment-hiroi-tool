@@ -890,6 +890,27 @@
         upd(r);
       }
     }
+    // 骨をまとめて平行移動する（線分の集まりの端のノードと途中の角）。ほかの線分と共有するノードも動くので、その線分は伸び縮みする
+    moveBones(segIds, dx, dy) {
+      const set = new Set(segIds);
+      const ids = new Set();
+      for (const s of this.state.segments) if (set.has(s.id)) { ids.add(s.a); ids.add(s.b); }
+      for (const id of ids) {
+        const n = this.node(id);
+        if (!n || n.base) continue; // 立のノードは元のノードといっしょに動く
+        this.moveNode(id, n.x + dx, n.y + dy);
+      }
+      for (const s of this.state.segments) {
+        if (!set.has(s.id) || s.riser) continue;
+        for (let i = 1; i < s.points.length - 1; i++) s.points[i] = [round(s.points[i][0] + dx, 1), round(s.points[i][1] + dy, 1)];
+      }
+    }
+    // 線分の途中の角を動かす（i は points の番号。端は動かさない）
+    moveSegmentPoint(segId, i, x, y) {
+      const s = this.segment(segId);
+      if (!s || i <= 0 || i >= s.points.length - 1) return;
+      s.points[i] = [round(x, 1), round(y, 1)];
+    }
     // 線分を骨の上の道でつないだ、連続する折れ線（path の順）
     pathPoints(path) {
       let out = [];

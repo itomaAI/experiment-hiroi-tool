@@ -927,7 +927,7 @@
    * ====================================================================== */
 
   const TOOLS = [
-    { id: 'select', name: '選ぶ', key: 'V', group: 'common', hint: '押して選ぶ（同じ場所をもう一度押すと 1 つ下。右ボタンで一覧）。空いた所をドラッグで範囲選択。線分を二度押しでノードを足す。ドラッグで動かす（ノード・箱・角。エリアは選んでから、中か枠を引くと動き、角を引くと形が変わる）。パンは Space＋ドラッグかホイール。Delete で消す' },
+    { id: 'select', name: '選ぶ', key: 'V', group: 'common', hint: '押して選ぶ（同じ場所をもう一度押すと 1 つ下。右ボタンで一覧）。空いた所をドラッグで範囲選択。線分を二度押しでノードを足す。ドラッグで動かす（ノード・箱・角。エリア・線・ルート・線分は選んでから引くと動く。エリアの角・線分の途中の角を引くと形が変わる）。パンは Space＋ドラッグかホイール。Delete で消す' },
     { id: 'box', name: '箱', key: 'B', group: 'pickup', hint: '引いて囲う。押すだけなら、直前と同じ大きさで置く。カテゴリは右の木で選ぶ' },
     { id: 'line', name: '線', key: 'W', group: 'pickup', hint: '押して骨をたどる（既存のノードに吸着。線分の上なら切る。無ければ骨が出来る）。水平・垂直に揃う（Alt で自由）。Shift で曲がり角。↑↓ で立。Enter か二度押しで置く。長さはルートが与える' },
     { id: 'area-rect', name: 'エリア（矩形）', key: 'R', group: 'layer', hint: '引いて囲む。囲むと、この範囲が何かを決める画面が開く' },
@@ -1022,6 +1022,31 @@
     let g = null;
     return {
       begin(ev) {
+        const hs = withAreas ? ev.hits : null;
+        if (withAreas) {
+          // ノードは、線やルートの下にあっても掴める
+          const nh = hs.find((x) => x.kind === 'node');
+          if (nh) {
+            g = { kind: 'node', id: nh.id, before: SM.clone(store.state), moved: false };
+            api.select({ kind: 'node', id: nh.id });
+            return true;
+          }
+          // 選んである線分の途中の角
+          const sel = app.selection;
+          if (sel && sel.kind === 'segment') {
+            const pi = segPoint(store.segment(sel.id), ev);
+            if (pi !== null) {
+              g = { kind: 'point', id: sel.id, i: pi, before: SM.clone(store.state), moved: false };
+              return true;
+            }
+          }
+          // 選んである線・ルート・線分を、まとめて動かす（骨ごと）
+          const segs = selectedBones(hs);
+          if (segs) {
+            g = { kind: 'bones', segs, last: [ev.x, ev.y], before: SM.clone(store.state), moved: false };
+            return true;
+          }
+        }
         const hit = ev.hits[0];
         // 選んであるエリア: 角を引けば形が変わり、エリアを引けば動く（ページ全体の層は動かさない）
         const sa = withAreas && app.selection && app.selection.kind === 'area' ? store.area(app.selection.id) : null;
@@ -1052,6 +1077,11 @@
         g.moved = true;
         if (g.kind === 'node') store.moveNode(g.id, ev.x, ev.y);
         else if (g.kind === 'vertex') store.moveAreaVertex(g.id, g.v, ev.x, ev.y);
+        else if (g.kind === 'point') store.moveSegmentPoint(g.id, g.i, ev.x, ev.y);
+        else if (g.kind === 'bones') {
+          store.moveBones(g.segs, ev.x - g.last[0], ev.y - g.last[1]);
+          g.last = [ev.x, ev.y];
+        }
         else if (g.kind === 'area') {
           store.moveArea(g.id, ev.x - g.last[0], ev.y - g.last[1]);
           g.last = [ev.x, ev.y];
@@ -1076,13 +1106,20 @@
         const gg = g;
         g = null;
         if (gg.moved) {
-          store.undoStack.push({ label: { node: 'ノードを動かす', box: '箱を動かす', corner: '箱の大きさ', area: 'エリアを動かす', vertex: 'エリアの形' }[gg.kind], state: gg.before });
+          store.undoStack.push({ label: { node: 'ノードを動かす', box: '箱を動かす', corner: '箱の大きさ', area: 'エリアを動かす', vertex: 'エリアの形', point: '線分の角を動かす', bones: '線・ルートを動かす' }[gg.kind], state: gg.before });
           store.redoStack = [];
           onStoreChange(null);
         }
         return true;
       },
       hover(ev) {
+        if (withAreas) {
+          const hs = ev.hits;
+          if (hs.some((x) => x.kind === 'node')) return 'move';
+          const sel = app.selection;
+          if (sel && sel.kind === 'segment' && segPoint(store.segment(sel.id), ev) !== null) return 'crosshair';
+          if (selectedBones(hs)) return 'move';
+        }
         const hit = ev.hits[0];
         const sa = withAreas && app.selection && app.selection.kind === 'area' ? store.area(app.selection.id) : null;
         if (sa && !isFull(sa)) {
@@ -1099,6 +1136,28 @@
         g = null;
       },
     };
+  }
+  // 選んである線・ルート・線分が、押した所に当たっていれば、その線分の集まり
+  function selectedBones(hs) {
+    const sel = app.selection;
+    if (!sel || !hs.some((x) => x.kind === sel.kind && x.id === sel.id)) return null;
+    if (sel.kind === 'pickup') {
+      const p = store.pickup(sel.id);
+      return p && p.kind === 'line' ? p.path.slice() : null;
+    }
+    if (sel.kind === 'route') {
+      const r = store.route(sel.id);
+      return r ? r.segments.slice() : null;
+    }
+    if (sel.kind === 'segment') return [sel.id];
+    return null;
+  }
+  // 選んだ線分の途中の角の近くなら、その番号
+  function segPoint(s, ev) {
+    if (!s || s.riser) return null;
+    const t = tol(6);
+    for (let i = 1; i < s.points.length - 1; i++) if (Math.abs(ev.x - s.points[i][0]) <= t && Math.abs(ev.y - s.points[i][1]) <= t) return i;
+    return null;
   }
   // 選んだエリアの角の近くなら、その番号
   function areaVertex(a, ev) {
