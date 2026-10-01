@@ -373,6 +373,7 @@
     '- key は、この応答の中だけで使う短い名前（英数字と - _）。parent・owner・material・when・label・category・candidates は key で指す。',
     '- 規則の候補は葉の key。規則の category は、候補の共通の祖先（積算士が箱を置く段）にする。',
     '- 同じものを二度作らない（同じ部材、同じ部屋）。',
+    '- 読めない字が続くときは、その行・その項目を書かない。「？」や同じ文字を繰り返さない。表の中身は、ふつう切り抜きから読む（PDF のページだけでは、細かい表の字は読めないことが多い）。',
     '- 表は、全部の行・全部の箱を読む。途中で省略しない。配線表は、行の配線の書き方ごとに葉を 1 つ（同じ書き方の行は同じ葉）、系統は行ごとに 1 つ。',
   ].join('\n');
 
@@ -795,6 +796,46 @@
     }
     S.touchPalette();
     return sum;
+  };
+
+  /*
+   * 途中で切れた JSON を、切れる前の最後の「並びの中の、閉じたオブジェクト」までで閉じて読む。
+   * 応答が出力の上限（MAX_TOKENS）に届いたとき（読めない字の繰り返しに入ったときなど）に、読めたところまでを入れるため。
+   * 返すもの: { json, cut: 捨てた文字数 } か null
+   */
+  A.salvage = function (text) {
+    const t = String(text || '');
+    try {
+      return { json: JSON.parse(t), cut: 0 };
+    } catch (e) {
+      /* 続ける */
+    }
+    const stack = [];
+    let inStr = false;
+    let esc = false;
+    let best = null;
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{' || ch === '[') stack.push(ch);
+      else if (ch === '}' || ch === ']') {
+        stack.pop();
+        if (ch === '}' && stack[stack.length - 1] === '[') best = { at: i + 1, stack: stack.slice() };
+      }
+    }
+    if (!best) return null;
+    const close = best.stack.slice().reverse().map((c) => (c === '{' ? '}' : ']')).join('');
+    try {
+      return { json: JSON.parse(t.slice(0, best.at) + close), cut: t.length - best.at };
+    } catch (e) {
+      return null;
+    }
   };
 
   // 応答の数（入れる前に見せる）

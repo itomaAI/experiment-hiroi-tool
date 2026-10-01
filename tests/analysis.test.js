@@ -156,3 +156,15 @@ test('注釈・覚え書き・見込み・系統の編集と、古い保存の�
   const m = SM.migrate(old);
   assert.deepStrictEqual([m.annotations, m.analysis.notes, m.palette.expected, m.palette.systems], [[], [], [], []]);
 });
+
+test('途中で切れた応答: 最後の閉じた項目までで閉じて読む', () => {
+  const full = JSON.stringify({ pages: [{ page: 1, title: 'a', kinds: [], pick: true }], categories: [{ key: 'a', name: 'A', parent: '', size: '個数' }, { key: 'b', name: 'B', parent: 'a', size: '個数' }], systems: [{ name: 'x', category: 'a' }] });
+  assert.deepStrictEqual(A.salvage(full).json, JSON.parse(full));
+  const cut = full.slice(0, full.indexOf('"systems"')) + '"systems": [{ "name": "LM1-1？/LM1-1？/LM1-1？/LM';
+  const sv = A.salvage(cut);
+  assert.ok(sv && sv.cut > 0);
+  assert.strictEqual(sv.json.categories.length, 2);
+  assert.strictEqual(sv.json.systems, undefined); // 切れた並びは落ちる（normalize が空にする）
+  assert.deepStrictEqual(A.normalize(sv.json).systems, []);
+  assert.strictEqual(A.salvage('{"pages": [{"page": 1, "ti'), null);
+});

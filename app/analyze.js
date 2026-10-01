@@ -811,6 +811,7 @@
         h('div', {}, 'いまのパレット: ', opts.withPalette ? '名前の一覧を添える（同じものを同じ名前で書いてもらうため）' : '添えない'),
       );
       for (const pr of pl.problems) send.append(h('div', { class: 'warn' }, pr));
+      if (pl.pages.length > 20 && !pl.crops.length) send.append(h('div', { class: 'warn' }, 'ページが多く、注釈がありません。PDF だけでは表の細かい字が読めず、応答が長くなって途中で切れることがあります（76 ページ一度で切れた例あり）。読みどころを囲むか、ページを絞ってください'));
       body.append(send, h('label', { class: 'chk' }, checkbox(!!opts.withPalette, (v) => { opts.withPalette = v; saveOpts(); renderRight(); }), 'いまのパレットの名前を添える'));
       body.append(h('div', { class: 'muted' }, 'PDF のページは Gemini の側で縮めて読まれ、細かい字（表の中身・注記）は読めないことが多いので、読ませたい所は注釈で囲んでください。題欄を 1 つ囲んで「全ページ」にすると、ページの題が正しく取れます。'));
       if (st.run) {
@@ -929,6 +930,7 @@
           /* 残せなくても入れる */
         }
         const sum = applyResult(res.json, pl, meta);
+        if (res.cut) sum.warnings.unshift('応答が途中で切れた（' + (res.finish || '?') + '）。読めたところまで（最後の ' + res.cut + ' 文字を捨てた）を入れた。足りないものは、送るページを減らすか、注釈で囲んでもう一度');
         st.last = { ok: true, sum, meta };
         toast('解析を入れた: ' + sumText(sum), 5000);
       } catch (e) {
@@ -1062,15 +1064,13 @@
         }
         const cand = ((data && data.candidates) || [])[0] || {};
         const text = ((cand.content || {}).parts || []).filter((x) => x.text && !x.thought).map((x) => x.text).join('');
-        let json = null;
-        try {
-          json = JSON.parse(text);
-        } catch (e) {
+        const sv = self.SMA.salvage(text);
+        if (!sv) {
           last = '応答を読めなかった（finish=' + (cand.finishReason || '?') + '・' + text.length + ' 文字）';
           if (cand.finishReason === 'MAX_TOKENS') throw new Error(last + '。送るページや注釈を減らしてください');
           continue;
         }
-        return { json, usage: data.usageMetadata, finish: cand.finishReason };
+        return { json: sv.json, usage: data.usageMetadata, finish: cand.finishReason, cut: sv.cut };
       }
       throw new Error(last || 'できなかった');
     }
