@@ -17,9 +17,18 @@
   "pickups":  [{ "id": "pk-0001", "kind": "box", "page": "pg-036", "category": "ct-…", "bbox": [x, y, w, h], "chosen": null }
              | { "id": "pk-0002", "kind": "line", "page": "pg-036", "category": "ct-…", "nodes": [...], "path": ["sg-…"],
                  "name": "1A2", "additions": { "nd-…": 5 }, "lengths": { "sg-…": { "h": 7, "v": null } } }],
+  "annotations": [{ "id": "an-0001", "page": "pg-036", "bbox": [x, y, w, h], "kind": "schedule", "title": "器具表", "note": "機械への覚え書き", "allPages": false }],
+  "analysis": {
+    "focus": "今回の範囲（人が解析に伝えること）",
+    "notes": [{ "id": "nt-0001", "kind": "注意", "text": "…", "pages": [36], "src": ["A3"], "by": "llm" | "human", "done": false }],
+    "runs":  [{ "id": "run-…", "at": "…", "model": "gemini-3.8-flash", "ms": 61000, "pages": [1, 2, 3], "crops": 9, "tokensIn": 35000, "tokensOut": 16000, "sum": { … } }]
+  },
   "seq": { … }                          // 次の id の番号
 }
 ```
+
+ページは図面解析の欄も持ちます: `sheet`・`kinds`（種類の並び）・`work`・`floor`・`scale`・`summary`・`send`（解析に送る）・`pick`（拾いのタブに出す）・`checked`（人が確かめた）・`tagBy`（欄ごとに `llm` か `human`）・`pickBy`。
+注釈の `kind` は `spec`（仕様書）・`legend`（凡例）・`schedule`（機器表）・`wiring`（配線表）・`note`（注記）・`layer`（層の手がかり）・`object`（対象の見本）・`caution`（注意）・`title`（題欄）。
 
 座標は PDF のポイント（原点は左上）。
 
@@ -43,10 +52,14 @@
       { "id": "lb-0002", "name": "玄関・風除室", "parent": "lb-0001",
         "rules": [{ "category": "ct-0003", "candidates": ["ct-0004"] }] }
     ],
-    "views": []                          // 保存した観点（集計表の行・列）。無くてよい
+    "views": [],                         // 保存した観点（集計表の行・列）。無くてよい
+    "expected": [{ "labels": ["lb-0002"], "category": "ct-0004", "count": 4, "by": "llm", "src": ["A3"] }], // 見込み（表に書いてある個数）
+    "systems":  [{ "name": "1A2", "from": "キュービクル", "to": "L1-1", "category": "ct-0009", "text": "…", "by": "llm" }] // 系統（配線表の行）
   }
 }
 ```
+
+カテゴリ・ラベルは、図面解析が作ったものに `by: "llm"` と `src`（根拠の札・ページ）を持ちます。
 
 パレットを読み込むときは「置き換える」か「足し合わせる（無い id だけ足す）」を選びます。
 置き換えは、図面の上の層・拾いが使っている id が新しいパレットに無ければ止まります。

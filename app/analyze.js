@@ -33,7 +33,7 @@
       views: new Map(),
       filter: 'all',
       q: '',
-      rtab: 'page',
+      rtab: null, // 最初は、解析をまだしていなければ「解析」（流れの案内）
       drag: null,
       run: null, // 走っている解析 { phase, t0, abort, steps }
       last: null, // 最後の解析の結果 { ok, sum, error, meta }
@@ -42,7 +42,7 @@
       noteKind: '',
     };
     IDB.get('analysis:last').then((r) => { st.hasLast = !!(r && r.raw); }).catch(() => {});
-    const opts = Object.assign({ model: 'gemini-3.8-flash', thinking: 'low', media: 'MEDIA_RESOLUTION_HIGH', withPalette: true }, readJson(OPT_STORE) || {});
+    const opts = Object.assign({ model: 'gemini-3.8-flash', thinking: 'high', media: 'MEDIA_RESOLUTION_HIGH', withPalette: true }, readJson(OPT_STORE) || {});
 
     function readJson(k) {
       try {
@@ -567,6 +567,7 @@
      * ====================================================================== */
     function renderRight() {
       ensure();
+      if (!st.rtab) st.rtab = (store.state.analysis.runs || []).length ? 'page' : 'run';
       right.innerHTML = '';
       const nNotes = store.state.analysis.notes.length;
       const nAnn = (store.state.annotations || []).length;
@@ -781,14 +782,28 @@
       const pl = planNow();
       const model = h('input', { type: 'text', value: opts.model, list: 'an-models', style: 'width:100%' });
       model.addEventListener('change', () => { opts.model = model.value.trim() || 'gemini-3.8-flash'; saveOpts(); });
-      const think = h('select', {}, ...[['low', '少なめ（速い）'], ['high', '多め（遅い・丁寧）']].map(([v, n]) => h('option', { value: v, selected: opts.thinking === v ? '' : null }, n)));
+      const think = h('select', {}, ...[['high', '多め（2〜3 分・表を最後まで読む）'], ['low', '少なめ（1 分・読み落としが出る）']].map(([v, n]) => h('option', { value: v, selected: opts.thinking === v ? '' : null }, n)));
       think.addEventListener('change', () => { opts.thinking = think.value; saveOpts(); });
+      if (!(store.state.analysis.runs || []).length) {
+        body.append(h('div', { class: 'an-guide' },
+          h('b', {}, '図面解析の流れ'),
+          h('ol', {},
+            h('li', {}, '左の一覧で、解析に「送る」ページを選ぶ（仕様書・凡例・系統図・機器表のあるページ・拾う平面図など。全部は要らない）'),
+            h('li', {}, '読みどころを、上の帯の筆で囲む（器具表・配線表・凡例・注記。題欄を 1 つ囲んで「全ページ」にすると、ページの題が正しく取れる）'),
+            h('li', {}, '「解析する」—— ページの分類・パレット・覚え書きが入る'),
+            h('li', {}, '確かめて直す（ページの欄・パレットの画面・覚え書き。左の「未確認」で絞れる）'),
+            h('li', {}, '拾いのタブへ。「拾う」のページだけが出る。「参照 ▾」で器具表などを小窓に出して照らし合わせられる'),
+          )));
+      }
       body.append(
         h('div', { class: 'sec', style: 'margin-top:0' }, 'Gemini'),
         h('div', { class: 'fld' }, h('span', { class: 'fn' }, '鍵'), h('div', { class: 'an-btns' }, h('span', { class: ks.has ? 'ok' : 'warn' }, ks.where), h('span', { class: 'spacer' }), h('button', { onclick: openKeyModal }, ks.has && !ks.itera ? '変える' : '鍵を入れる'))),
         h('div', { class: 'two' }, h('label', { class: 'fld' }, h('span', { class: 'fn' }, 'モデル'), model, h('datalist', { id: 'an-models' }, h('option', { value: 'gemini-3.8-flash' }), h('option', { value: 'gemini-3.1-pro-preview' }))), h('label', { class: 'fld' }, h('span', { class: 'fn' }, '考える量'), think)),
-        h('div', { class: 'sec' }, '送るもの'),
+        h('div', { class: 'sec' }, '今回の範囲・伝えること'),
       );
+      const focus = h('textarea', { rows: 3, placeholder: '例: 今回は電灯設備と照明器具だけを拾う。幹線は別に拾う。器具表と平面図の部屋名が違うことがある' }, store.state.analysis.focus || '');
+      focus.addEventListener('change', () => edit('今回の範囲', (S) => S.setAnalysisFocus(focus.value.trim())));
+      body.append(focus, h('div', { class: 'muted' }, '書いておくと、範囲の外の設備はパレットに入りません（作業といっしょに保存されます）'), h('div', { class: 'sec' }, '送るもの'));
       const send = h('div', { class: 'an-send' });
       send.append(
         h('div', {}, 'PDF: ', pl.pages.length ? h('b', {}, A.formatPageSpec(pl.pages)) : h('span', { class: 'warn' }, 'なし'), pl.pages.length ? '（' + pl.pages.length + ' ページを切り出して送る）' : ''),
@@ -861,6 +876,7 @@
       }
       const ok = await confirmBox('Gemini に送る', h('div', {},
         h('p', {}, '次のものを Google の Gemini API（' + opts.model + '）へ送ります。'),
+        store.state.analysis.focus ? h('p', {}, '今回の範囲: ' + store.state.analysis.focus) : null,
         h('ul', {}, h('li', {}, 'PDF: ' + (pl.pages.length ? 'p.' + A.formatPageSpec(pl.pages) + '（' + pl.pages.length + ' ページ）' : 'なし')), h('li', {}, '注釈の切り抜き: ' + pl.crops.length + ' 件（画像 ' + pl.images + ' 枚）'), opts.withPalette ? h('li', {}, 'いまのパレットの名前') : null),
         h('p', { class: 'muted' }, '結果は、ページの分類・パレット・覚え書きにそのまま入ります（元に戻すで戻せます）。人が直したページの欄は替えません。'),
       ), '送る');
@@ -869,6 +885,9 @@
       st.run = { phase: '用意しています', t0: Date.now(), abort: new AbortController(), cancelled: false };
       ticker = setInterval(() => { renderBar(); const t = right.querySelector('.an-progress .muted'); if (t && st.run) t.textContent = Math.round((Date.now() - st.run.t0) / 1000) + ' 秒'; }, 1000);
       renderAll();
+      // 返事が来ないまま待ち続けない（考える量「多め」でも、ふつうは 3 分ほど）
+      const runRef = st.run;
+      const killer = setTimeout(() => { runRef.timedOut = true; runRef.abort.abort(); }, 12 * 60 * 1000);
       let uploaded = null;
       try {
         const parts = A.parts(store.state, pl, { palette: opts.withPalette });
@@ -914,9 +933,11 @@
         toast('解析を入れた: ' + sumText(sum), 5000);
       } catch (e) {
         console.error(e);
-        st.last = { ok: false, cancelled: !!(e && e.cancelled), error: e && e.cancelled ? '' : String((e && e.message) || e) };
+        const timedOut = runRef.timedOut;
+        st.last = { ok: false, cancelled: !!(e && e.cancelled) && !timedOut, error: timedOut ? '12 分たっても返事が無かったので、やめた。送るページや注釈を減らすか、考える量を「少なめ」にしてください' : e && e.cancelled ? '' : String((e && e.message) || e) };
         toast(st.last.cancelled ? 'やめた' : 'できなかった: ' + st.last.error.slice(0, 80), 5000);
       } finally {
+        clearTimeout(killer);
         if (uploaded) deleteFile(key, uploaded.name).catch(() => {});
         clearInterval(ticker);
         st.run = null;
@@ -1077,7 +1098,83 @@
     }
     const renderAll = () => ctx.renderAll();
 
+    /* ======================================================================
+     * 参照の小窓（拾いのタブから、注釈の範囲を見ながら拾う。積算士が器具表を別の窓に出して照らし合わせる形）
+     * ====================================================================== */
+    let refZ = 30;
+    function openRefMenu(anchor) {
+      const anns = (store.state.annotations || []).slice().sort((x, y) => ((store.page(x.page) || {}).index || 0) - ((store.page(y.page) || {}).index || 0));
+      const tags = tagMap();
+      const menu = h('div', { class: 'refmenu' });
+      const close = () => { menu.remove(); document.removeEventListener('pointerdown', outside, true); };
+      const outside = (e) => { if (!menu.contains(e.target)) close(); };
+      if (!anns.length) menu.append(h('div', { class: 'muted', style: 'padding:8px;max-width:260px' }, '注釈がまだありません。図面解析のタブで、器具表や凡例を囲むと、ここから小窓で見られます。'));
+      for (const a of anns) {
+        const k = A.kind(a.kind);
+        const pg = store.page(a.page);
+        menu.append(h('button', { onclick: () => { close(); openRef(a.id); } }, h('span', { class: 'tg', style: 'background:' + k.color }, tags.get(a.id) || ''), ' ', k.name, a.title ? '・' + a.title : '', h('span', { class: 'dim' }, '　p.' + (pg ? pg.index : '?'))));
+      }
+      const r = anchor.getBoundingClientRect();
+      menu.style.left = Math.max(8, Math.min(window.innerWidth - 300, r.left)) + 'px';
+      menu.style.top = r.bottom + 4 + 'px';
+      document.body.append(menu);
+      setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
+    }
+    async function openRef(id) {
+      const a = store.annotation(id);
+      const pg = a && store.page(a.page);
+      const ppg = pg && app.pdfPages.get(pg.index);
+      if (!ppg) return toast('図面の PDF を開いてください', 2000);
+      const k = A.kind(a.kind);
+      const old = document.querySelector('.refwin[data-id="' + id + '"]');
+      if (old) {
+        old.style.zIndex = String(++refZ);
+        return;
+      }
+      const c = h('canvas', {});
+      let zoom = 1;
+      const body = h('div', { class: 'rbody' }, c);
+      const win = h('div', { class: 'refwin', 'data-id': id, style: 'z-index:' + ++refZ },
+        h('div', { class: 'rhead' }, h('span', { class: 'tg', style: 'background:' + k.color }, tagMap().get(id) || ''), h('b', {}, k.name + (a.title ? '・' + a.title : '')), h('span', { class: 'dim' }, 'p.' + pg.index), h('span', { class: 'spacer' }),
+          h('button', { class: 'ghost icon', title: '縮小', onclick: () => setZoom(zoom / 1.25) }, '−'), h('button', { class: 'ghost icon', title: '拡大', onclick: () => setZoom(zoom * 1.25) }, '＋'), h('button', { class: 'ghost icon', title: '閉じる', onclick: () => win.remove() }, '×')),
+        body);
+      const n = document.querySelectorAll('.refwin').length;
+      win.style.left = Math.max(10, window.innerWidth - 560 - n * 24) + 'px';
+      win.style.top = 90 + n * 24 + 'px';
+      document.body.append(win);
+      const sc = Math.min(4, Math.max(1.5, 1400 / Math.max(1, a.bbox[2])));
+      c.width = Math.round(a.bbox[2] * sc);
+      c.height = Math.round(a.bbox[3] * sc);
+      const fitW = () => Math.min(c.width, 520);
+      const setZoom = (z) => { zoom = Math.max(0.3, Math.min(6, z)); c.style.width = fitW() * zoom + 'px'; };
+      setZoom(1);
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, c.width, c.height);
+      try {
+        await ppg.render({ canvasContext: g, viewport: ppg.getViewport({ scale: sc }), transform: [1, 0, 0, 1, -a.bbox[0] * sc, -a.bbox[1] * sc] }).promise;
+      } catch (e) {
+        /* */
+      }
+      body.addEventListener('wheel', (e) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }, { passive: false });
+      // 見出しを引いて動かす
+      const head = win.querySelector('.rhead');
+      head.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button')) return;
+        win.style.zIndex = String(++refZ);
+        const sx = e.clientX - win.offsetLeft;
+        const sy = e.clientY - win.offsetTop;
+        const mv = (ev) => { win.style.left = ev.clientX - sx + 'px'; win.style.top = Math.max(0, ev.clientY - sy) + 'px'; };
+        const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+        window.addEventListener('pointermove', mv);
+        window.addEventListener('pointerup', up);
+      });
+      win.addEventListener('pointerdown', () => { win.style.zIndex = String(++refZ); });
+    }
+
     return {
+      openRefMenu,
+      openRef,
       render,
       shown: () => setTimeout(resize, 0),
       setPage,

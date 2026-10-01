@@ -2342,7 +2342,19 @@
   function renderPanel() {
     const el = $('#panel');
     el.innerHTML = '';
-    el.append(secCategoryTree(), secDetail());
+    el.append(secPageNotes() || '', secCategoryTree(), secDetail());
+  }
+  // このページの要約と覚え書き（図面解析で入れたもの。済んでいないもの）
+  function secPageNotes() {
+    const pg = page();
+    if (!pg) return null;
+    const notes = ((store.state.analysis && store.state.analysis.notes) || []).filter((n) => !n.done && (n.pages || []).includes(pg.index));
+    if (!notes.length && !pg.summary) return null;
+    const box = h('details', { class: 'sec pnotes', open: notes.length ? '' : null }, h('summary', {}, h('b', {}, 'このページ'), notes.length ? h('span', { class: 'dim' }, '　覚え書き ' + notes.length) : null));
+    if (pg.summary) box.append(h('div', { class: 'muted', style: 'margin:4px 0' }, pg.summary));
+    for (const n of notes) box.append(h('div', { class: 'pnote' }, h('span', { class: 'nk' }, n.kind), n.text));
+    box.append(h('a', { href: '#', class: 'muted', onclick: (e) => { e.preventDefault(); setScreen('analyze'); if (anScreen) { anScreen.setPage(pg.id); anScreen.state.rtab = 'notes'; anScreen.render(); } } }, '図面解析で見る・直す'));
+    return box;
   }
   const lchip = (labelId) => {
     const l = P().label(labelId);
@@ -3023,6 +3035,7 @@
   }
   function placeSample() {
     if (store.state.pickups.length && !confirm('いまの層と拾いに、見本（1A2 と玄関まわり）を足します。よいですか')) return;
+    setScreen('pick');
     edit('見本を置く', (S) => {
       if (!S.state.areas.some((a) => isFull(a))) SMFixture.pageWideAreas(S);
       SMFixture.placeSample(S);
@@ -3058,6 +3071,7 @@
     $('#b-fit').addEventListener('click', fit);
     $('#b-zoomin').addEventListener('click', () => zoomBy(1.4));
     $('#b-zoomout').addEventListener('click', () => zoomBy(1 / 1.4));
+    $('#b-ref').addEventListener('click', (e) => { e.stopPropagation(); if (anScreen) anScreen.openRefMenu(e.currentTarget); });
     $('#b-pdf').addEventListener('click', () => $('#file-pdf').click());
     $('#b-save').addEventListener('click', saveJob);
     $('#b-load').addEventListener('click', () => $('#file').click());

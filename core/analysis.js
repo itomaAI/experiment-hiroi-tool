@@ -135,6 +135,12 @@
     this.state.annotations = (this.state.annotations || []).filter((a) => a.id !== id);
   };
 
+  /* ---- 今回の範囲（人が解析に伝えること。作業といっしょに残す） ---- */
+  S.setAnalysisFocus = function (text) {
+    A.ensure(this.state);
+    this.state.analysis.focus = String(text || '');
+  };
+
   /* ---- 覚え書き ---- */
   S.addNote = function (note) {
     A.ensure(this.state);
@@ -549,6 +555,8 @@
     }
     const digest = o.palette === false ? '' : A.paletteDigest(state.palette, o.digestLimit);
     const ask = [A.PAGE_RULES];
+    const focus = clean(o.focus !== undefined ? o.focus : state.analysis && state.analysis.focus);
+    if (focus) ask.push('## 今回の積算の範囲と、人からの指示\n' + focus + '\n- 範囲の外の設備は、カテゴリ・ラベル・系統にしない（凡例や仕様書に載っていても）。ページの分類は、送ったページ全部について答える。');
     if (digest) ask.push(digest);
     ask.push('# 頼みごと\n以上を読み、決まりに従って JSON で答えてください。pages には送った PDF のページだけを入れてください。' + (o.extra ? '\n' + o.extra : ''));
     out.push({ text: ask.join('\n\n') });

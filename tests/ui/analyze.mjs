@@ -155,6 +155,17 @@ await page.click('#apptabs button[data-screen=pick]');
 await page.waitForTimeout(300);
 ok((await page.locator('#pages .item').count()) === 1, '拾いタブには「拾う」のページだけ（p.2）', await page.locator('#pages .item').count());
 ok((await page.locator('#pagecount').textContent()).includes('1 / 3'), '枚数の表示「1 / 3 枚」');
+// 参照の小窓
+await page.click('#b-ref');
+ok((await page.locator('.refmenu button').count()) === 2, '「参照 ▾」に注釈が 2 つ', await page.locator('.refmenu button').count());
+await page.locator('.refmenu button').first().click();
+await page.waitForSelector('.refwin canvas');
+ok((await page.locator('.refwin').count()) === 1 && (await page.locator('.refwin canvas').evaluate((c) => c.width)) > 100, '注釈の範囲を小窓に出す');
+await shot('an_05_ref');
+await page.click('.refwin .rhead button[title=閉じる]');
+ok((await page.locator('.refwin').count()) === 0, '小窓を閉じる');
+// このページの覚え書き（p.2 に 1 つ）
+ok((await page.locator('#panel .pnotes .pnote').count()) === 1, '拾いの右に、このページの覚え書き', await page.locator('#panel .pnotes .pnote').count());
 
 // 7. 集計の照合・パレットの系統と見込み
 await page.click('#apptabs button[data-screen=sum]');
