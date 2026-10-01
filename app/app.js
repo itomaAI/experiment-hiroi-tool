@@ -1960,13 +1960,9 @@
             outId = route.id;
           } else outId = S.addRoute(pageId, segments, { label: labelId }, pal);
         }
-        if (hasLenInput()) {
-          const ex = existingLen();
-          if (ex) S.setRouteLength(ex.id, num(d.h), num(d.v));
-          else {
-            const lid = S.addRoute(pageId, segments, { length_h: num(d.h), length_v: num(d.v) }, pal);
-            if (!outId) outId = lid;
-          }
+        if (hasLenInput() || d.lenTouched) {
+          const lid = setLengthOn(S, pageId, segments, d.h, d.v);
+          if (!outId) outId = lid;
         }
       }
       if (labelId) S.setLabelRules(labelId, d.rules.filter((r) => !r.removed));
@@ -2048,13 +2044,15 @@
     // ルートの長さ（長さルート）
     function drawLen() {
       elLen.innerHTML = '';
-      if (!isRoute || route) return;
+      if (!isRoute) return;
       const inH = h('input', { type: 'number', step: '0.1', value: d.h === null ? '' : d.h, placeholder: '平 m', 'data-role': 'len-h', style: 'width:72px' });
       const inV = h('input', { type: 'number', step: '0.1', value: d.v === null ? '' : d.v, placeholder: '立 m', 'data-role': 'len-v', style: 'width:72px' });
       inH.addEventListener('input', () => { d.h = inH.value === '' ? null : inH.value; drawRight(); });
       inV.addEventListener('input', () => { d.v = inV.value === '' ? null : inV.value; drawRight(); });
       const ex = existingLen();
-      elLen.append(h('div', { class: 'st', style: 'margin-top:10px' }, '長さ', h('span', { class: 'cnt' }, '入れると、この線分の集まりに長さルートが乗る' + (ex ? '（いまは ' + lengthText(ex) + '。書き換える）' : ''))), h('div', {}, '平 ', inH, '　立 ', inV, ' m'), h('div', { class: 'muted', style: 'margin-top:4px' }, '人が入れる。図の形は根拠にしない。縦の図のように線分ごとに決まらないときは、なぞった全体に 1 つ'));
+      inH.addEventListener('input', () => { d.lenTouched = true; });
+      inV.addEventListener('input', () => { d.lenTouched = true; });
+      elLen.append(h('div', { class: 'st', style: 'margin-top:10px' }, '長さ', h('span', { class: 'cnt' }, ex ? '（いまは ' + lengthText(ex) + '。書き換える・空にすると外す）' : '入れると、この線分の集まりに長さルートが乗る')), h('div', {}, '平 ', inH, '　立 ', inV, ' m'), h('div', { class: 'muted', style: 'margin-top:4px' }, '人が入れる。図の形は根拠にしない。縦の図のように線分ごとに決まらないときは、なぞった全体に 1 つ'));
     }
 
     function sectionInside(pal) {
@@ -2234,6 +2232,14 @@
       d.root = roots.includes(lastRoot) ? lastRoot : prefer || null;
     }
     loadRules();
+    // ルート: 同じ線分の集まりにもう長さがあれば、欄に入れておく
+    if (isRoute) {
+      const ex0 = existingLen();
+      if (ex0) {
+        d.h = ex0.length_h;
+        d.v = ex0.length_v;
+      }
+    }
     const body = h('div', { class: 'am' }, h('div', { class: 'am-left' }, h('div', { class: 'st' }, isRoute ? 'このルートは、何ですか' : 'この範囲は、何ですか'), elRoots, elSearch, elValues, elParent, elLen), elRight);
     hd = openModal({ title: editing ? (isRoute ? 'ルートの意味を直す' : 'エリアの意味を直す') : isRoute ? 'なぞったルート（' + segments.length + ' 線分）に、意味を与える' : '囲んだ範囲に、意味を与える', width: 920, body, onKey: (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commit(); } } });
     draw();
@@ -2377,12 +2383,13 @@
     if (isLen) {
       const inH = h('input', { type: 'number', step: '0.1', value: r.length_h === null ? '' : r.length_h, placeholder: '平 m', style: 'width:64px' });
       const inV = h('input', { type: 'number', step: '0.1', value: r.length_v === null ? '' : r.length_v, placeholder: '立 m', style: 'width:64px' });
-      const ap = () => edit('ルートの長さ', (S) => S.setRouteLength(r.id, inH.value === '' ? null : inH.value, inV.value === '' ? null : inV.value));
+      const ap = () => edit('ルートの長さ', (S) => setLengthOn(S, r.page, r.segments, inH.value, inV.value));
       inH.addEventListener('change', ap);
       inV.addEventListener('change', ap);
       rows.push(h('span', { class: 'k' }, '長さ'), h('span', {}, '平 ', inH, ' 立 ', inV, ' m'));
     } else {
       const l = pal.label(r.label);
+      rows.push(h('span', { class: 'k' }, '長さ'), lengthInputs(r.page, r.segments, 'ルートに長さを入れる', 'rlen'));
       rows.push(h('span', { class: 'k' }, 'ラベル'), h('span', {}, lchip(r.label)), h('span', { class: 'k' }, '規則'), h('span', {}, l && l.rules.length ? l.rules.map((x) => pal.category(x.category).name + ' → ' + x.candidates.map((c) => pal.category(c).name).join('・')).join('／') : h('span', { class: 'muted' }, 'なし')));
     }
     // 同じ線分を覆うほかのルート
@@ -2390,8 +2397,38 @@
     return h('div', { class: 'sec' }, head('layer', '選んだ層: ルート'),
       h('div', { class: 'detail' },
         h('div', { class: 'kv' }, ...rows, h('span', { class: 'k' }, '通る線'), h('span', {}, through.size ? [...through].map((id) => { const p = store.pickup(id); return h('a', { href: '#', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'pickup', id }; renderAll(); } }, (p.name || p.id) + ' ' + pal.category(p.category).name); }) : 'なし'), h('span', { class: 'k' }, '重なるルート'), h('span', {}, others.length ? others.map((x) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'route', id: x.id }; renderAll(); } }, routeName(pal, x) + ' ')) : 'なし')),
-        h('div', { class: 'muted', style: 'margin:4px 0' }, isLen ? '長さは、通る線がこのルートの全部の線分を通るとき、1 回だけ数える。線の側に線分ごとの上書きがあれば、そちらが勝つ（旗「上書き」）' : 'ラベルは、覆う線分を通る線に効く（祖先の節の規則も）。同じ木のラベルを同じ線分に重ねると置き換わる'),
+        h('div', { class: 'muted', style: 'margin:4px 0' }, isLen ? '長さは、通る線がこのルートの全部の線分を通るとき、1 回だけ数える。線の側に線分ごとの上書きがあれば、そちらが勝つ（旗「上書き」）。平・立とも空にすると、長さルートを外す' : 'ラベルは、覆う線分を通る線に効く（祖先の節の規則も）。同じ木のラベルを同じ線分に重ねると置き換わる。長さは、同じ線分の集まりに掛かる長さルートとして入る（ラベルの規則ではない）。空にすると外す'),
         h('div', { class: 'acts' }, isLen ? null : h('button', { class: 'primary', onclick: async () => { const id = await openLayerModal({ route: r.id }); if (id) { app.selection = { kind: 'route', id }; renderAll(); } } }, '意味・規則を直す…'), h('button', { class: 'danger', onclick: () => edit('ルートを外す', (S) => S.removeRoute(r.id)) }, 'ルートを外す（骨は残す）'), h('button', { class: 'danger', onclick: deleteSelection, disabled: through.size ? '' : null }, '骨ごと消す'))));
+  }
+  // 線分の集まり（ちょうどその集まり）に掛かっている長さルート
+  function lengthRouteOn(segments) {
+    return store.state.routes.find((r) => !r.label && r.segments.length === segments.length && r.segments.every((x) => segments.includes(x))) || null;
+  }
+  // その線分の集まりの長さを入れる。平・立とも空なら長さルートを外す
+  function setLengthOn(S, pageId, segments, hh, vv) {
+    const num = (x) => (x === null || x === undefined || x === '' ? null : Number(x));
+    const H = num(hh);
+    const V = num(vv);
+    const ex = S.state.routes.find((r) => !r.label && r.segments.length === segments.length && r.segments.every((x) => segments.includes(x)));
+    if (H === null && V === null) {
+      if (ex) S.removeRoute(ex.id);
+      return null;
+    }
+    if (ex) {
+      S.setRouteLength(ex.id, H, V);
+      return ex.id;
+    }
+    return S.addRoute(pageId, segments, { length_h: H, length_v: V }, S.palette);
+  }
+  // 長さの欄（平・立）。change で入れる
+  function lengthInputs(pageId, segments, label, role) {
+    const ex = lengthRouteOn(segments);
+    const inH = h('input', { type: 'number', step: '0.1', value: ex && ex.length_h !== null ? ex.length_h : '', placeholder: '平 m', style: 'width:64px', 'data-role': role + '-h' });
+    const inV = h('input', { type: 'number', step: '0.1', value: ex && ex.length_v !== null ? ex.length_v : '', placeholder: '立 m', style: 'width:64px', 'data-role': role + '-v' });
+    const ap = () => edit(label, (S) => setLengthOn(S, pageId, segments, inH.value, inV.value));
+    inH.addEventListener('change', ap);
+    inV.addEventListener('change', ap);
+    return h('span', {}, '平 ', inH, ' 立 ', inV, ' m');
   }
   const routeName = (pal, r) => (r.label ? pal.labelPath(r.label).join('/') : '長さ ' + lengthText(r)) + '（' + r.segments.length + '）';
 
@@ -2403,9 +2440,9 @@
     const ls = SM.derive.labelsOfSegment(store, pal, s);
     return h('div', { class: 'sec' }, h('h3', {}, '骨: 線分（層でも拾いでもない）'),
       h('div', { class: 'detail' },
-        h('div', { class: 'kv' }, h('span', { class: 'k' }, '線分'), h('span', {}, s.id + (s.riser ? '（立）' : '')), h('span', { class: 'k' }, '覆うルート'), h('span', {}, routes.length ? routes.map((r) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'route', id: r.id }; renderAll(); } }, routeName(pal, r) + ' ')) : h('span', { class: 'muted' }, 'なし')), h('span', { class: 'k' }, '通る線'), h('span', {}, through.length ? through.map((p) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'pickup', id: p.id }; renderAll(); } }, (p.name || p.id) + ' ')) : 'なし'), h('span', { class: 'k' }, '効くラベル'), h('span', {}, ...[...ls.labels].map(lchip))),
+        h('div', { class: 'kv' }, h('span', { class: 'k' }, '線分'), h('span', {}, s.id + (s.riser ? '（立）' : '')), h('span', { class: 'k' }, 'この線分の長さ'), lengthInputs(s.page, [s.id], '線分に長さを入れる', 'slen'), h('span', { class: 'k' }, '覆うルート'), h('span', {}, routes.length ? routes.map((r) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'route', id: r.id }; renderAll(); } }, routeName(pal, r) + ' ')) : h('span', { class: 'muted' }, 'なし')), h('span', { class: 'k' }, '通る線'), h('span', {}, through.length ? through.map((p) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'pickup', id: p.id }; renderAll(); } }, (p.name || p.id) + ' ')) : 'なし'), h('span', { class: 'k' }, '効くラベル'), h('span', {}, ...[...ls.labels].map(lchip))),
         ls.straddles.length ? h('div', { class: 'flag' }, 'エリアの境を跨いでいる（' + ls.straddles.length + '）。線やルートの道具で線分の上を押すと、そこで切れる') : null,
-        h('div', { class: 'muted', style: 'margin-top:4px' }, 'この線分に長さを付けるには、ルートの道具でなぞって長さルートを置く。線分だけなら、線を選んで上書きもできる'),
+        h('div', { class: 'muted', style: 'margin-top:4px' }, '「この線分の長さ」は、この線分 1 本を覆う長さルートとして入る（いくつかの線分にまとめて 1 つの長さなら、ルートの道具でなぞる）。特定の線だけ違う長さにするなら、線を選んで上書き'),
         h('div', { class: 'acts' }, h('button', { class: 'danger', onclick: deleteSelection, disabled: through.length ? '' : null }, '消す'))));
   }
   function detailNode(pal, n) {
