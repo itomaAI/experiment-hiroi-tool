@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>拾いツール（試作）</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="palette.css" />
+</head>
+<body>
+  <header id="hdr">
+    <div class="brand">拾いツール <span class="dim">試作</span></div>
+    <nav id="apptabs" class="apptabs">
+      <button data-screen="pick" class="on">拾い</button>
+      <button data-screen="sum">集計</button>
+      <button data-screen="palette">パレット</button>
+    </nav>
+    <div id="docname" class="docname"></div>
+    <div class="spacer"></div>
+    <div class="hbtns">
+      <button id="b-undo" title="元に戻す (Ctrl+Z)">↶</button>
+      <button id="b-redo" title="やり直す (Ctrl+Y)">↷</button>
+      <button id="b-pdf" title="図面の PDF を開く（ドラッグでも開ける）">図面を開く</button>
+      <button id="b-save" title="作業（パレット・層・拾い）を JSON で書き出す。PDF は含まない">書き出す</button>
+      <button id="b-load" title="書き出した JSON を読み込む">読み込む</button>
+      <button id="b-menu" title="そのほか">…</button>
+    </div>
+    <div id="toast" class="toast"></div>
+  </header>
+
+  <!-- 拾い -->
+  <section id="screen-pick" class="screen on">
+    <div id="pickbar" class="pickbar">
+      <div id="tools" class="tools"></div>
+      <div class="spacer"></div>
+      <div id="layers" class="layers"></div>
+    </div>
+    <div id="body">
+      <aside id="left">
+        <div class="ttl">ページ <span id="pagecount" class="dim"></span></div>
+        <input id="pagefind" class="search" type="search" placeholder="題で探す" />
+        <div id="pages" class="list"></div>
+      </aside>
+
+      <main id="main">
+        <div id="drawhead" class="drawhead">
+          <div id="chips" class="chips"></div>
+          <span class="spacer"></span>
+          <button id="b-zoomout" class="icon" title="縮小">−</button>
+          <span id="zoom" class="zoom"></span>
+          <button id="b-zoomin" class="icon" title="拡大">＋</button>
+          <button id="b-fit" title="ページ全体 (0)">全体</button>
+        </div>
+        <div id="stage" tabindex="0">
+          <div id="stack"><canvas id="pdf"></canvas></div>
+          <canvas id="over"></canvas>
+          <div id="floats"></div>
+          <div id="hint" class="hint"></div>
+        </div>
+        <div id="welcome" class="welcome"></div>
+      </main>
+
+      <aside id="right">
+        <div id="panel"></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 集計 -->
+  <section id="screen-sum" class="screen">
+    <div id="sum" class="sumscreen"></div>
+  </section>
+
+  <!-- パレット -->
+  <section id="screen-palette" class="screen">
+    <div id="pal" class="palscreen"></div>
+  </section>
+
+  <div id="dropcover" class="dropcover">図面の PDF、または書き出した JSON をここへ</div>
+  <div id="modal-root"></div>
+  <input type="file" id="file" accept=".json,application/json" style="display:none" />
+  <input type="file" id="file-pdf" accept=".pdf,application/pdf" style="display:none" />
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="../core/model.js"></script>
+  <script src="../fixtures/palette.js"></script>
+  <script src="palette.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

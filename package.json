@@ -1,0 +1,14 @@
+{
+  "name": "experiment-hiroi-tool",
+  "private": true,
+  "description": "AI支援拾いツール試作版（ビルド無しの静的な HTML/JS）",
+  "scripts": {
+    "serve": "python3 -m http.server 8792 --bind 127.0.0.1",
+    "test": "node --test tests/core.test.js",
+    "test:ui": "node tests/ui/smoke.mjs",
+    "test:sample": "node tests/ui/sample.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}

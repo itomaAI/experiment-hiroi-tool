@@ -1,0 +1,78 @@
+/* パレットの画面（タブ「パレット」） */
+.palscreen { flex: 1; min-height: 0; display: grid; grid-template-columns: 210px minmax(380px, 1fr) 430px; background: var(--panel); }
+.pnav { border-right: 1px solid var(--line); padding: 12px 10px; display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+.pnav .pttl { font-size: 12px; color: var(--dim); font-weight: 700; letter-spacing: .04em; }
+.pnav .pname { font-weight: 700; margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pnav .pk { display: flex; justify-content: space-between; align-items: center; border: 0; background: none; padding: 7px 10px; border-radius: 6px; text-align: left; font-weight: 600; color: #334155; }
+.pnav .pk:hover { background: #f8fafc; }
+.pnav .pk.on { background: var(--accent-soft); color: var(--accent); }
+.pnav .pc { font-size: 11px; color: var(--dim); font-weight: 400; }
+.pnav .phint { margin: 10px 2px; font-size: 12px; color: var(--dim); line-height: 1.6; }
+.pnav .pfile { margin-top: auto; display: flex; flex-direction: column; gap: 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+.pcenter { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); }
+.phead { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.phead .ptitle { font-weight: 700; font-size: 14px; margin-right: 6px; }
+.phead .search { width: 180px; margin: 0; }
+.olist { flex: 1; overflow: auto; padding: 4px 0 24px; }
+.okeys { padding: 6px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--dim); background: #fafafa; }
+
+.orow { display: flex; align-items: center; gap: 6px; height: 30px; padding-left: calc(10px + var(--d) * 22px); padding-right: 10px; border-left: 3px solid transparent; }
+.orow:hover { background: #f8fafc; }
+.orow.on { background: var(--accent-soft); border-left-color: var(--accent); }
+.orow .otg { width: 14px; flex: none; text-align: center; color: var(--dim); font-size: 10px; cursor: pointer; user-select: none; }
+.orow .odot, .rmx .odot { width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,.15); display: inline-block; }
+.orow input.oname { flex: 1; min-width: 60px; border: 1px solid transparent; background: transparent; padding: 3px 6px; border-radius: 4px; font: inherit; }
+.orow input.oname:hover { border-color: var(--line); background: #fff; }
+.orow input.oname:focus { border-color: var(--accent); background: #fff; outline: none; }
+.orow.fixed input.oname { font-weight: 700; color: var(--dim); }
+.orow.head input.oname { font-weight: 700; }
+.obadges { display: flex; gap: 4px; flex: none; align-items: center; }
+.ob { font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 8px; background: var(--bg); color: #475569; white-space: nowrap; }
+.ob.size.cnt { background: #e0f2fe; color: #0369a1; }
+.ob.size.len { background: #dcfce7; color: #15803d; }
+.ob.use { background: var(--pickup-soft); color: var(--pickup); }
+.ob.rule { background: var(--layer-soft); color: var(--layer); }
+.ob.dim { background: none; color: var(--dim); }
+
+.pright { overflow: auto; padding: 12px 16px 24px; min-width: 0; }
+.ppath { color: var(--dim); font-size: 12px; margin-bottom: 8px; }
+.pkv { display: grid; grid-template-columns: 78px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+.pkv .k { color: var(--dim); font-size: 12px; }
+.pin { width: 100%; font-size: 14px; font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; margin-right: 6px; }
+.seg button { border: 0; border-radius: 0; padding: 3px 14px; }
+.seg button.on { background: var(--accent); color: #fff; }
+.psec { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pst { font-weight: 700; margin-bottom: 6px; }
+.pline { display: flex; align-items: center; gap: 4px; }
+.pacts { display: flex; gap: 6px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.chips2 { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.lch { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 8px; border: 1px solid var(--line-strong); border-left: 4px solid var(--c, #94a3b8); border-radius: 4px; background: #fff; font-size: 12px; }
+.lch.sm { height: 20px; font-size: 11px; padding: 0 2px 0 6px; }
+.lch.sm button { width: 18px; height: 18px; }
+.msel { max-width: 220px; }
+.msel.sm { max-width: 120px; font-size: 11px; padding: 1px 2px; }
+.ptbl { border-collapse: collapse; width: 100%; font-size: 12px; margin: 6px 0; }
+.ptbl th, .ptbl td { border-bottom: 1px solid var(--line); padding: 4px; text-align: left; vertical-align: middle; }
+.ptbl th { color: var(--dim); font-weight: 600; }
+.inh { font-size: 12px; color: #475569; padding: 2px 0; }
+.lrow { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid #f1f5f9; border-radius: 0; padding: 5px 4px; }
+.swatch { display: inline-block; width: 18px; height: 18px; border-radius: 4px; vertical-align: middle; margin-left: 8px; border: 1px solid rgba(0,0,0,.1); }
+.subt { color: var(--dim); font-size: 11px; margin: 8px 0 3px; }
+
+/* 規則の一覧 */
+.rmx { border-collapse: collapse; font-size: 12px; margin: 8px 12px; }
+.rmx th, .rmx td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; white-space: nowrap; }
+.rmx tr:first-child th { background: #f8fafc; position: sticky; top: 0; z-index: 1; }
+.rmx th.ln { font-weight: 600; cursor: pointer; display: table-cell; }
+.rmx th.ln .odot { margin-right: 6px; vertical-align: -1px; }
+.rmx td { cursor: pointer; color: #334155; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.rmx td.has { background: #fffaf3; }
+.rmx td.one { background: #ecfdf5; color: #166534; font-weight: 600; }
+.rmx tr.grp td { background: #f1f5f9; color: var(--dim); font-weight: 700; cursor: default; }
+
+/* まとめて貼り付け */
+.pastebox { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+textarea.paste { width: 100%; font: 13px/1.5 ui-monospace, "SFMono-Regular", Menlo, monospace; border: 1px solid var(--line-strong); border-radius: 6px; padding: 8px; resize: vertical; tab-size: 2; }
+.ppreview { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow: auto; max-height: 420px; font-size: 12px; background: #fafafa; }
