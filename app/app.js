@@ -45,7 +45,8 @@
     return CAT_COLORS[n % CAT_COLORS.length];
   };
   const COLORS = { route: '#2563eb', noLength: '#ea580c', select: '#f59e0b', undecided: '#d97706', wire: '#16a34a', cross: '#dc2626', draft: '#2563eb' };
-  const PX = { node: 7, seg: 6, border: 6, snap: 8 };
+  // 当たりの広さ（画面の px。拡大率によらない）
+  const PX = { node: 11, seg: 10, border: 9, snap: 12, box: 5, handle: 10 };
   const SCALES = [2, 4, 6];
 
   // 浮かせた要素の上の出来事を、図面に渡さない
@@ -862,7 +863,7 @@
       for (let i = ps.length - 1; i >= 0; i--) {
         const p = ps[i];
         if (p.kind !== 'box') continue;
-        const t = tol(2);
+        const t = tol(PX.box);
         if (x >= p.bbox[0] - t && x <= p.bbox[0] + p.bbox[2] + t && y >= p.bbox[1] - t && y <= p.bbox[1] + p.bbox[3] + t) out.push({ kind: 'pickup', id: p.id, how: 'box' });
       }
       const seen = new Set();
@@ -1155,20 +1156,20 @@
   // 選んだ線分の途中の角の近くなら、その番号
   function segPoint(s, ev) {
     if (!s || s.riser) return null;
-    const t = tol(6);
+    const t = tol(PX.handle);
     for (let i = 1; i < s.points.length - 1; i++) if (Math.abs(ev.x - s.points[i][0]) <= t && Math.abs(ev.y - s.points[i][1]) <= t) return i;
     return null;
   }
   // 選んだエリアの角の近くなら、その番号
   function areaVertex(a, ev) {
-    const t = tol(7);
+    const t = tol(PX.handle + 1);
     const poly = SM.geom.shapePolygon(a.shape);
     for (let i = 0; i < poly.length; i++) if (Math.abs(ev.x - poly[i][0]) <= t && Math.abs(ev.y - poly[i][1]) <= t) return i;
     return null;
   }
   function boxCorner(p, ev) {
     if (!isSel('pickup', p.id)) return null;
-    const t = tol(6);
+    const t = tol(PX.handle);
     const b = p.bbox;
     const near = (x, y) => Math.abs(ev.x - x) <= t && Math.abs(ev.y - y) <= t;
     if (near(b[0], b[1])) return 'tl';
@@ -1260,7 +1261,7 @@
           const hs = ev.hits;
           if (!hs.length) return api.select(null);
           const cur = app.selection;
-          const same = cycle && Math.abs(cycle.x - ev.x) <= api.tol(3) && Math.abs(cycle.y - ev.y) <= api.tol(3);
+          const same = cycle && Math.abs(cycle.x - ev.x) <= api.tol(6) && Math.abs(cycle.y - ev.y) <= api.tol(6);
           let i = 0;
           if (same && cur) {
             const k = hs.findIndex((x) => x.kind === cur.kind && x.id === cur.id);
