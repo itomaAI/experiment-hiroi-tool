@@ -6,11 +6,13 @@
   <title>拾いツール（試作）</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="palette.css" />
+  <link rel="stylesheet" href="analyze.css" />
 </head>
 <body>
   <header id="hdr">
     <div class="brand">拾いツール <span class="dim">試作</span></div>
     <nav id="apptabs" class="apptabs">
+      <button data-screen="analyze">図面解析</button>
       <button data-screen="pick" class="on">拾い</button>
       <button data-screen="sum">集計</button>
       <button data-screen="palette">パレット</button>
@@ -27,6 +29,11 @@
     </div>
     <div id="toast" class="toast"></div>
   </header>
+
+  <!-- 図面解析 -->
+  <section id="screen-analyze" class="screen">
+    <div id="an" class="anscreen"></div>
+  </section>
 
   <!-- 拾い -->
   <section id="screen-pick" class="screen on">
@@ -83,8 +90,10 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="../core/model.js"></script>
+  <script src="../core/analysis.js"></script>
   <script src="../fixtures/palette.js"></script>
   <script src="palette.js"></script>
+  <script src="analyze.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

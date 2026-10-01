@@ -1,0 +1,48 @@
+{
+ "pages": [
+  { "page": 1, "title": "電気設備工事 特記仕様書", "sheet": "E-01", "kinds": ["仕様書", "凡例"], "work": "", "floor": "", "scale": "NON", "summary": "工事概要と凡例", "pick": false },
+  { "page": 2, "title": "電灯設備図 2階平面図", "sheet": "E-02", "kinds": ["平面図", "機器表"], "work": "電灯設備", "floor": "2階", "scale": "1:100", "summary": "2 階の照明と器具表", "pick": true },
+  { "page": 3, "title": "幹線設備図 系統図", "sheet": "E-03", "kinds": ["系統図", "配線表"], "work": "幹線設備", "floor": "", "scale": "NON", "summary": "幹線の系統と配線表", "pick": true }
+ ],
+ "categories": [
+  { "key": "c_light", "name": "照明器具", "parent": "", "size": "個数", "source": ["A1"] },
+  { "key": "c_dl", "name": "ダウンライト", "parent": "c_light", "size": "個数", "source": ["A1"] },
+  { "key": "c_base", "name": "ベースライト", "parent": "c_light", "size": "個数", "source": ["A1"] },
+  { "key": "f_DL1", "name": "DL-1", "parent": "c_dl", "size": "個数", "spec": "LED φ100", "source": ["A2"] },
+  { "key": "f_DL2", "name": "DL-2", "parent": "c_dl", "size": "個数", "spec": "LED φ150", "source": ["A2"] },
+  { "key": "f_BL1", "name": "BL-1", "parent": "c_base", "size": "個数", "source": ["A2"] },
+  { "key": "c_wire", "name": "配線", "parent": "", "size": "長さ", "source": ["A3"] },
+  { "key": "w_cv38", "name": "CV 38-3C (E51)", "parent": "c_wire", "size": "長さ", "source": ["A3"] },
+  { "key": "c_mat", "name": "部材", "parent": "", "size": "長さ" },
+  { "key": "m_cv38", "name": "CV 38-3C", "parent": "c_mat", "size": "長さ" },
+  { "key": "m_e51", "name": "E 51", "parent": "c_mat", "size": "長さ" }
+ ],
+ "components": [
+  { "owner": "w_cv38", "material": "m_cv38", "count": 1, "when": [], "add_slack": true },
+  { "owner": "w_cv38", "material": "m_e51", "count": 1, "when": ["l_conduit_yes"], "add_slack": false }
+ ],
+ "label_trees": [ { "key": "t_floor", "name": "階" }, { "key": "t_conduit", "name": "電線管" } ],
+ "labels": [
+  { "key": "l_2f", "name": "2階", "tree": "t_floor", "parent": "" },
+  { "key": "l_office", "name": "事務室", "tree": "t_floor", "parent": "l_2f", "source": ["A2"] },
+  { "key": "l_meeting", "name": "会議室", "tree": "t_floor", "parent": "l_2f", "source": ["A2"] },
+  { "key": "l_conduit_yes", "name": "あり", "tree": "t_conduit", "parent": "" },
+  { "key": "l_conduit_no", "name": "なし", "tree": "t_conduit", "parent": "" }
+ ],
+ "rules": [
+  { "label": "l_office", "category": "c_light", "candidates": ["f_BL1"], "source": ["A2"] },
+  { "label": "l_meeting", "category": "c_dl", "candidates": ["f_DL1", "f_DL2"], "source": ["A2"] }
+ ],
+ "expected": [
+  { "labels": ["l_office"], "category": "f_BL1", "count": 12, "source": ["A2"] },
+  { "labels": ["l_meeting"], "category": "f_DL1", "count": 4 }
+ ],
+ "systems": [
+  { "name": "1L-1", "from": "受電盤", "to": "L-2", "category": "w_cv38", "text": "CV 38-3C (E51)", "source": ["A3"] },
+  { "name": "1L-2", "from": "受電盤", "to": "L-3", "category": "w_cv38" }
+ ],
+ "notes": [
+  { "kind": "図に無い部材", "text": "1 m 以上の空配管には呼び線を入れる", "pages": [1], "source": ["p.1"] },
+  { "kind": "注意", "text": "会議室は既設の器具を再利用する（別途）", "pages": [2] }
+ ]
+}

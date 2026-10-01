@@ -76,3 +76,7 @@
 .pastebox { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 textarea.paste { width: 100%; font: 13px/1.5 ui-monospace, "SFMono-Regular", Menlo, monospace; border: 1px solid var(--line-strong); border-radius: 6px; padding: 8px; resize: vertical; tab-size: 2; }
 .ppreview { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow: auto; max-height: 420px; font-size: 12px; background: #fafafa; }
+
+.ptbl.sys tr.done td { background: #f0fdf4; }
+.ptbl td.num, .ptbl th.num { text-align: right; }
+.ai { font-size: 9px; font-weight: 700; color: #7c3aed; border: 1px solid #c4b5fd; border-radius: 3px; padding: 0 3px; background: #f5f3ff; margin-right: 3px; }

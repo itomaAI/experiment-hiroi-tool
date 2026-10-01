@@ -28,6 +28,8 @@
     const KIND = {
       category: { title: '部材カテゴリ', unit: '件', hint: '拾うものの木。粗い分類から、集計表に出る部材（葉）まで。箱は「個数」、線は「長さ」の葉だけを候補にします。' },
       label: { title: '層のラベル', unit: '件', hint: 'エリア・ルートに付ける意味の木。節に「この中では、カテゴリ は 候補 のどれか」という規則を付けると、重なった拾いの部材が絞られます。木の中の節どうしは排他です。' },
+      systems: { title: '系統（配線表）', unit: '件', hint: '配線表の行（1A2 など）。線を引くときの名前の候補になり、引いた線の数で消し込みます。図面解析が配線表から読んだものも、ここで直せます。' },
+      expected: { title: '見込み（表の個数）', unit: '件', hint: '器具表などに書いてある個数（部屋 × 器具 × 台数）。集計タブの「照合」で、置いた数と比べます。' },
       rules: { title: '規則の一覧', unit: '本', hint: '規則を「節 × カテゴリ」の表で見渡します。セルを押すと、その節の規則を直せます。' },
     };
 
@@ -119,9 +121,10 @@
 
     function nav(pal) {
       const nRules = pal.labels.reduce((s, l) => s + (l.rules || []).length, 0);
-      const counts = { category: pal.categories.length - 1, label: pal.labels.length, rules: nRules };
+      const sp = store.state.palette;
+      const counts = { category: pal.categories.length - 1, label: pal.labels.length, rules: nRules, systems: (sp.systems || []).length, expected: (sp.expected || []).length };
       const box = h('div', { class: 'pnav' }, h('div', { class: 'pttl' }, 'パレット'), h('div', { class: 'pname' }, pal.name || h('span', { class: 'dim' }, '（名前なし）')));
-      for (const k of ['category', 'label', 'rules']) {
+      for (const k of ['category', 'label', 'rules', 'systems', 'expected']) {
         box.append(h('button', { class: 'pk' + (st.kind === k ? ' on' : ''), onclick: () => { st.kind = k; render(); } }, h('span', {}, KIND[k].title), h('span', { class: 'pc' }, counts[k])));
       }
       box.append(
@@ -147,6 +150,8 @@
     /* ---------------- 真ん中: アウトライナー ---------------- */
     function center(pal, u) {
       if (st.kind === 'rules') return ruleMatrix(pal);
+      if (st.kind === 'systems') return systemsTable(pal);
+      if (st.kind === 'expected') return expectedTable(pal);
       const kind = st.kind;
       const q = st.query[kind].trim();
       const search = h('input', { class: 'search', type: 'search', placeholder: '名前で探す', value: st.query[kind] });
@@ -358,6 +363,10 @@
     /* ---------------- 右: 詳細 ---------------- */
     function right(pal, u) {
       const box = h('div', { class: 'pright' });
+      if (st.kind === 'systems' || st.kind === 'expected') {
+        box.append(h('div', { class: 'muted', style: 'padding:12px' }, KIND[st.kind].hint, ' 「AI」の印は図面解析が書いたもので、直すと消えます。'));
+        return box;
+      }
       if (st.kind === 'category') box.append(detailCategory(pal, u, st.sel.category));
       else box.append(detailLabel(pal, u, st.sel.label));
       return box;
@@ -374,6 +383,12 @@
       const name = h('input', { type: 'text', value: c.name, class: 'pin' });
       name.addEventListener('change', () => { const v = name.value.trim(); if (v && v !== c.name) edit('名前を直す', (S) => S.updateCategory(id, { name: v })); });
       out.append(h('div', { class: 'pkv' }, h('span', { class: 'k' }, '名前'), name));
+      if (!fixed) {
+        const note = h('input', { type: 'text', value: c.note || '', class: 'pin', placeholder: '仕様・品番・メモ' });
+        note.addEventListener('change', () => { if (note.value.trim() !== (c.note || '')) edit('メモを直す', (S) => S.updateCategory(id, { note: note.value.trim() })); });
+        out.append(h('div', { class: 'pkv' }, h('span', { class: 'k' }, 'メモ'), note));
+        if (c.by === 'llm' || (c.src && c.src.length)) out.append(h('div', { class: 'muted', style: 'margin:-2px 0 8px 86px' }, h('span', { class: 'ai' }, 'AI'), ' 図面解析が作った' + (c.src && c.src.length ? '（根拠: ' + c.src.join('・') + '）' : '')));
+      }
       if (fixed) {
         out.append(h('p', { class: 'muted' }, '根です。根で置いた拾いは「純粋な拾い」（何を拾ったかを決めずに置いた印）になります。部材カテゴリは、この下に作ってください。'));
       } else {
@@ -457,6 +472,7 @@
       const name = h('input', { type: 'text', value: l.name, class: 'pin' });
       name.addEventListener('change', () => { const v = name.value.trim(); if (v && v !== l.name) edit('名前を直す', (S) => S.updateLabel(id, { name: v })); });
       out.append(h('div', { class: 'pkv' }, h('span', { class: 'k' }, '名前'), name));
+      if (l.by === 'llm' || (l.src && l.src.length)) out.append(h('div', { class: 'muted', style: 'margin:-2px 0 8px 86px' }, h('span', { class: 'ai' }, 'AI'), ' 図面解析が作った' + (l.src && l.src.length ? '（根拠: ' + l.src.join('・') + '）' : '')));
       if (top) {
         const head = h('input', { type: 'checkbox', checked: l.root ? '' : null });
         head.addEventListener('change', () => edit(head.checked ? '見出しにする' : '見出しをやめる', (S) => S.updateLabel(id, { root: head.checked })));
@@ -569,6 +585,64 @@
       }
       const noRule = pal.paintable().filter((l) => !(l.rules || []).length).length;
       return h('div', { class: 'pcenter' }, head, body, h('div', { class: 'okeys' }, '緑は候補が 1 つ（置くだけで決まる）。規則の無い節 ' + noRule + ' 件（階・敷設のように、絞らず集計の観点にだけ使う節もあります）'));
+    }
+
+    /* ---------------- 系統（配線表の行） ---------------- */
+    function systemsTable(pal) {
+      const list = store.state.palette.systems || [];
+      const lines = new Map();
+      for (const p of store.state.pickups) if (p.kind === 'line' && p.name) lines.set(p.name, (lines.get(p.name) || 0) + 1);
+      const lenLeaves = pal.categories.filter((x) => x.parent !== null && pal.isLeaf(x.id) && x.size === '長さ');
+      const catSel = (value, onPick) => {
+        const sel = h('select', { class: 'msel sm' }, h('option', { value: '' }, '（配線を選ぶ）'), ...lenLeaves.map((x) => h('option', { value: x.id, selected: x.id === value ? '' : null }, pal.categoryPath(x.id).slice(1).join(' / '))));
+        sel.addEventListener('change', () => onPick(sel.value || null));
+        return sel;
+      };
+      const inp = (v, w, on) => { const i = h('input', { type: 'text', value: v || '', style: 'width:' + w }); i.addEventListener('change', () => on(i.value.trim())); return i; };
+      const done = list.filter((x) => x.name && lines.get(x.name)).length;
+      const head = h('div', { class: 'phead' }, h('div', { class: 'ptitle' }, '系統（配線表）'), h('span', { class: 'muted' }, list.length + ' 系統・線を引いた ' + done), h('span', { class: 'spacer' }), h('button', { onclick: () => edit('系統を足す', (S) => S.addSystem({})) }, '＋ 系統'));
+      const body = h('div', { class: 'olist' });
+      if (!list.length) body.append(h('div', { class: 'empty', style: 'margin:10px' }, 'まだ系統がありません。図面解析で配線表を「配線表」の注釈で囲んで解析するか、「＋ 系統」で足してください。'));
+      else {
+        const tbl = h('table', { class: 'ptbl sys' }, h('tr', {}, h('th', {}, '系統名'), h('th', {}, '起点'), h('th', {}, '終点'), h('th', {}, '配線（カテゴリ）'), h('th', { class: 'num', title: 'この名前の線の本数' }, '線'), h('th')));
+        list.forEach((x, i) => {
+          const n = x.name ? lines.get(x.name) || 0 : 0;
+          tbl.append(h('tr', { class: n ? 'done' : '' },
+            h('td', {}, x.by === 'llm' ? h('span', { class: 'ai' }, 'AI') : null, inp(x.name, '80px', (v) => edit('系統名', (S) => S.updateSystem(i, { name: v })))),
+            h('td', {}, inp(x.from, '110px', (v) => edit('系統の起点', (S) => S.updateSystem(i, { from: v })))),
+            h('td', {}, inp(x.to, '110px', (v) => edit('系統の終点', (S) => S.updateSystem(i, { to: v })))),
+            h('td', { title: x.text || '' }, catSel(x.category, (v) => edit('系統の配線', (S) => S.updateSystem(i, { category: v })))),
+            h('td', { class: 'num' }, n || ''),
+            h('td', {}, h('button', { class: 'ghost icon', title: '消す', onclick: () => edit('系統を消す', (S) => S.removeSystem(i)) }, '×')),
+          ));
+        });
+        body.append(tbl);
+      }
+      return h('div', { class: 'pcenter' }, head, body, h('div', { class: 'okeys' }, '拾いの画面で線に系統名を付けると、「線」の欄に本数が出ます（消し込み）。配線は、線を引くときのカテゴリの手がかりです。'));
+    }
+
+    /* ---------------- 見込み（表に書いてある個数） ---------------- */
+    function expectedTable(pal) {
+      const list = store.state.palette.expected || [];
+      const leaves = pal.categories.filter((x) => x.parent !== null && pal.isLeaf(x.id));
+      const head = h('div', { class: 'phead' }, h('div', { class: 'ptitle' }, '見込み（表の個数）'), h('span', { class: 'muted' }, list.length + ' 件'), h('span', { class: 'spacer' }),
+        labelSelect(pal, '＋ 見込み（条件の節を選ぶ）', (v) => { if (v) edit('見込みを足す', (S) => { S.state.palette.expected.push({ labels: [v], category: leaves[0] ? leaves[0].id : null, count: 1, by: 'human' }); S.touchPalette(); }); }));
+      const body = h('div', { class: 'olist' });
+      if (!list.length) body.append(h('div', { class: 'empty', style: 'margin:10px' }, 'まだ見込みがありません。図面解析で器具表を「機器表」の注釈で囲んで解析すると、部屋ごとの台数が入ります。'));
+      else {
+        const tbl = h('table', { class: 'ptbl' }, h('tr', {}, h('th', {}, '条件（ラベル）'), h('th', {}, '部材'), h('th', { class: 'num' }, '個数'), h('th')));
+        list.forEach((x, i) => {
+          const conds = h('span', { class: 'chips2' });
+          for (const w of x.labels) conds.append(h('span', { class: 'lch sm', style: '--c:' + ((pal.label(w) || {}).color || '#999') }, pal.label(w) ? pal.labelPath(w).join(' / ') : w + '（無い）', h('button', { class: 'ghost icon', onclick: () => edit('見込みの条件', (S) => S.updateExpected(i, { labels: x.labels.filter((y) => y !== w) })) }, '×')));
+          conds.append(labelSelect(pal, '＋', (v) => { if (v && !x.labels.includes(v)) edit('見込みの条件', (S) => S.updateExpected(i, { labels: x.labels.concat([v]) })); }));
+          const cnt = h('input', { type: 'number', min: '0', step: '1', value: x.count, style: 'width:64px' });
+          cnt.addEventListener('change', () => edit('見込みの個数', (S) => S.updateExpected(i, { count: Number(cnt.value) || 0 })));
+          tbl.append(h('tr', {}, h('td', {}, x.by === 'llm' ? h('span', { class: 'ai' }, 'AI') : null, conds), h('td', {}, materialSelect(pal, null, x.category, (v) => edit('見込みの部材', (S) => S.updateExpected(i, { category: v })))), h('td', { class: 'num' }, cnt), h('td', {}, h('button', { class: 'ghost icon', title: '消す', onclick: () => edit('見込みを消す', (S) => S.removeExpected(i)) }, '×'))));
+        });
+        void leaves;
+        body.append(tbl);
+      }
+      return h('div', { class: 'pcenter' }, head, body, h('div', { class: 'okeys' }, '条件の節（部屋など）が重なった所に置いた部材の数と比べます（集計タブ → 照合）。'));
     }
 
     /* ---------------- まとめて貼り付け ---------------- */

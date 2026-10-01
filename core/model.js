@@ -245,7 +245,7 @@
    *   pickups   拾い（箱・線）。線は path（線分の列）と、線分ごとの長さの上書き（lengths）を持つ
    */
   M.emptyState = function (paletteDef) {
-    return { format: 5, doc: { name: '', pages: null, demo: false }, palette: paletteDef || M.emptyPalette(), pages: [], areas: [], nodes: [], segments: [], routes: [], pickups: [], seq: { ar: 0, nd: 0, sg: 0, rt: 0, pk: 0, lb: 0, ct: 0 } };
+    return { format: 5, doc: { name: '', pages: null, demo: false }, palette: paletteDef || M.emptyPalette(), pages: [], areas: [], nodes: [], segments: [], routes: [], pickups: [], annotations: [], analysis: { notes: [], runs: [] }, seq: { ar: 0, nd: 0, sg: 0, rt: 0, pk: 0, lb: 0, ct: 0, an: 0, nt: 0 } };
   };
   const hasLen = (x) => !!x && ((x.length_h !== null && x.length_h !== undefined) || (x.length_v !== null && x.length_v !== undefined));
   M.hasLen = hasLen;
@@ -324,23 +324,38 @@
 
   // まっさらなパレット（根「拾えるもの」だけ）
   M.emptyPalette = function () {
-    return { name: '', categories: [{ id: 'cat-root', name: '拾えるもの（根）', parent: null, size: null }], labels: [], views: [] };
+    return { name: '', categories: [{ id: 'cat-root', name: '拾えるもの（根）', parent: null, size: null }], labels: [], views: [], expected: [], systems: [] };
   };
 
   /*
    * 保存の形を今の版へ。format 4 → 5: doc（図面の PDF の名前と枚数）を足す。
    * opts.doc4: format 4 の作業がどの図面のものだったか（ページの index の付け替え表 map を持てる）
    */
+  // format 5 の後から足した欄（図面解析: annotations・analysis、パレットの expected・systems）を埋める
+  M.fill5 = function (st) {
+    if (!Array.isArray(st.annotations)) st.annotations = [];
+    if (!st.analysis) st.analysis = { notes: [], runs: [] };
+    if (!Array.isArray(st.analysis.notes)) st.analysis.notes = [];
+    if (!Array.isArray(st.analysis.runs)) st.analysis.runs = [];
+    st.seq = st.seq || {};
+    for (const k of ['an', 'nt']) if (typeof st.seq[k] !== 'number') st.seq[k] = 0;
+    if (st.palette) {
+      if (!Array.isArray(st.palette.expected)) st.palette.expected = [];
+      if (!Array.isArray(st.palette.systems)) st.palette.systems = [];
+    }
+    return st;
+  };
+
   M.migrate = function (st, opts) {
     if (!st || !st.format) return null;
-    if (st.format === 5) return st;
+    if (st.format === 5) return M.fill5(st);
     if (st.format === 4) {
       const o = opts || {};
       const d = o.doc4 || { name: '', pages: null };
       if (d.map) for (const p of st.pages) if (d.map[p.index]) p.index = d.map[p.index];
       st.doc = { name: d.name || '', pages: d.pages || null, demo: !!d.demo };
       st.format = 5;
-      return st;
+      return M.fill5(st);
     }
     return null;
   };

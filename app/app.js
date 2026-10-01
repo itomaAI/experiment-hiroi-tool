@@ -137,7 +137,7 @@
   async function boot() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
     const saved = load();
-    if (saved) store.replace(saved);
+    if (saved) store.replace(SMA.ensure(saved));
     store.onChange(onStoreChange);
     bindUI();
     setTool('select');
@@ -219,6 +219,7 @@
       st.seq.ct = old.seq.ct || 0;
       st.doc = docInfo;
       st.pages = sizes.map((s) => ({ id: pageIdOf(s.index), index: s.index, title: titleOf(s.index), width: s.width, height: s.height }));
+      SMA.ensure(st);
       store.replace(st);
       app.views = new Map();
     }
@@ -231,7 +232,8 @@
       }
     }
     app.pageId = null;
-    setScreen('pick');
+    // 拾うページの印が無ければ、図面解析のタブから始める
+    setScreen(store.state.pages.some((p) => p.pick === true) ? 'pick' : 'analyze');
     const withWork = store.state.pages.find((p) => store.pickupsOn(p.id).length || store.areasOn(p.id).some((a) => !isFull(a)));
     setPage((withWork || store.state.pages[0]).id);
     recompute();
@@ -2413,9 +2415,15 @@
     catSel.addEventListener('change', () => edit('拾いのカテゴリを替える', (S) => S.setPickupCategory(p.id, catSel.value)));
     const rows = [h('span', { class: 'k' }, 'カテゴリ'), catSel];
     if (p.kind === 'line') {
-      const nm = h('input', { type: 'text', value: p.name || '', placeholder: '系統名（1A2 など）', style: 'width:150px' });
-      nm.addEventListener('change', () => edit('線の名前', (S) => S.setPickupName(p.id, nm.value)));
-      rows.push(h('span', { class: 'k' }, '名前'), nm);
+      const systems = (store.state.palette.systems || []).filter((x) => x.name);
+      const nm = h('input', { type: 'text', value: p.name || '', placeholder: '系統名（1A2 など）', style: 'width:150px', list: 'dl-systems' });
+      // 系統（配線表の行）の名前を選ぶと、線のカテゴリもその行の配線にする（いまのカテゴリがその祖先のとき）
+      nm.addEventListener('change', () => edit('線の名前', (S) => {
+        S.setPickupName(p.id, nm.value);
+        const sys = systems.find((x) => x.name === nm.value.trim());
+        if (sys && sys.category && pal.category(sys.category) && sys.category !== p.category && pal.categoryUnder(sys.category, p.category)) S.setPickupCategory(p.id, sys.category);
+      }));
+      rows.push(h('span', { class: 'k' }, '名前'), h('span', {}, nm, h('datalist', { id: 'dl-systems' }, ...systems.map((x) => h('option', { value: x.name }, (x.from || '') + (x.to ? ' → ' + x.to : ''))))));
       for (const nid of store.lineEnds(p)) {
         const inp = h('input', { type: 'number', step: '0.1', value: p.additions[nid] === undefined ? '' : p.additions[nid], placeholder: '余長 m' });
         inp.addEventListener('change', () => edit('余長を入れる', (S) => S.setAddition(p.id, nid, inp.value)));
@@ -2561,7 +2569,8 @@
    * 集計の画面（タブ「集計」）
    * ====================================================================== */
 
-  const hasExpected = () => !!P().label('lb-room-01') && !!P().category('cat-GS100');
+  const palExpected = () => ((store.state.palette && store.state.palette.expected) || []).filter((e) => P().category(e.category) && e.labels.every((l) => P().label(l)));
+  const hasExpected = () => palExpected().length > 0 || (!!P().label('lb-room-01') && !!P().category('cat-GS100'));
   function renderSum() {
     const el = $('#sum');
     el.innerHTML = '';
@@ -2663,6 +2672,7 @@
     return h('div', {}, bar, tb.rows.length ? tbl : h('div', { class: 'empty' }, app.objects.length ? 'この観点に入る対象がありません（未確定・長さ未入力のものは入りません）' : 'まだ拾いがありません'));
   }
   function viewCheck() {
+    if (palExpected().length) return viewCheckPalette();
     const pal = P();
     const exp = SMFixture.expected();
     const placed = {};
@@ -2687,6 +2697,30 @@
       }
     }
     return h('div', {}, h('div', { class: 'bar' }, h('b', {}, '器具表（p.36）との照合'), h('span', { class: 'muted' }, '置いた ' + done + ' / ' + total + ' 台。行を押すと、その部屋のエリアへ')), tbl);
+  }
+
+  // パレットの見込み（解析が表から読んだ個数。パレットの画面で直せる）との照合
+  function viewCheckPalette() {
+    const pal = P();
+    const list = palExpected();
+    const tbl = h('table', {}, h('tr', {}, h('th', {}, '条件（ラベル）'), h('th', {}, '部材'), h('th', { class: 'num' }, '見込み'), h('th', { class: 'num' }, '置いた'), h('th', { class: 'num' }, 'あと')));
+    let done = 0;
+    let total = 0;
+    for (const e of list) {
+      let got = 0;
+      for (const o of app.objects) {
+        if (o.material !== e.category && o.leaf !== e.category) continue;
+        if (o.quantity === null) continue;
+        if (!e.labels.every((l) => o.labels.includes(l))) continue;
+        got += o.kind === 'box' ? o.quantity : 1;
+      }
+      total += e.count;
+      done += Math.min(got, e.count);
+      const left = e.count - got;
+      tbl.append(h('tr', { class: 'row', onclick: () => { const a = store.state.areas.find((x) => e.labels.includes(x.label)); if (a) { setScreen('pick'); setPage(a.page); app.selection = { kind: 'area', id: a.id }; renderAll(); } else toast('この条件のエリアは、まだ図面にありません', 2000); } },
+        h('td', {}, e.labels.map((l) => pal.labelPath(l).join(' / ')).join(' × ') || '（条件なし）'), h('td', {}, pal.category(e.category).name), h('td', { class: 'num' }, e.count), h('td', { class: 'num' }, got), h('td', { class: 'num ' + (left === 0 ? 'ok' : left < 0 ? 'ng' : '') }, left)));
+    }
+    return h('div', {}, h('div', { class: 'bar' }, h('b', {}, '見込み（表に書いてある個数）との照合'), h('span', { class: 'muted' }, '置いた ' + done + ' / ' + total + '。行を押すと、そのエリアへ。見込みはパレットの画面で直せます')), tbl);
   }
 
   /* ======================================================================
@@ -2743,8 +2777,9 @@
   function renderPages() {
     const el = $('#pages');
     el.innerHTML = '';
-    const pages = store.state.pages;
-    $('#pagecount').textContent = pages.length ? pages.length + ' 枚' : '';
+    const all = store.state.pages;
+    const pages = SMA.pickPages(store.state);
+    $('#pagecount').textContent = all.length ? (pages.length < all.length ? pages.length + ' / ' + all.length + ' 枚' : all.length + ' 枚') : '';
     const q = app.pageQuery.trim();
     for (const p of pages) {
       if (q && !(p.title + ' p.' + p.index).includes(q)) continue;
@@ -2760,6 +2795,7 @@
       );
     }
     if (!pages.length) el.append(h('div', { class: 'empty', style: 'margin:8px' }, '図面の PDF を開くと、ここにページが並びます'));
+    else if (pages.length < all.length) el.append(h('div', { class: 'muted', style: 'margin:8px' }, '図面解析で「拾う」に印を付けたページだけを出しています（ほかに ' + (all.length - pages.length) + ' 枚）。', h('a', { href: '#', onclick: (e) => { e.preventDefault(); setScreen('analyze'); } }, '図面解析へ')));
   }
   function renderChips() {
     const el = $('#chips');
@@ -2845,6 +2881,7 @@
     for (const sc of $$('.screen')) sc.classList.toggle('on', sc.id === 'screen-' + id);
     closeMenu();
     if (id === 'pick') setTimeout(() => { resize(); if (app.needFit) fit(); else applyView(); }, 0);
+    if (id === 'analyze' && anScreen) anScreen.shown();
     renderAll();
   }
 
@@ -2857,6 +2894,7 @@
     drawOverlay();
     if (app.screen === 'sum') renderSum();
     if (app.screen === 'palette' && palScreen) palScreen.render();
+    if (app.screen === 'analyze' && anScreen) anScreen.render();
     const d = store.state.doc || {};
     $('#docname').textContent = d.name ? d.name + (d.pages ? '（' + d.pages + ' ページ）' : '') : '';
     $('#b-undo').disabled = !store.undoStack.length;
@@ -3067,8 +3105,11 @@
       })
     : null;
 
+  /* ---- 図面解析の画面（app/analyze.js） ---- */
+  const anScreen = self.SMAnalyzeScreen ? self.SMAnalyzeScreen({ el: $('#an'), store, P, h, $, edit, toast, openModal, confirmBox, app, IDB, ENV, setScreen, renderAll }) : null;
+
   // 外から覗く（試験・inject_js 用）
-  self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
+  self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, anScreen: () => anScreen, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
 
   boot();
 })();
