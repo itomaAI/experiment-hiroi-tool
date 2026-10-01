@@ -373,6 +373,7 @@
     '- key は、この応答の中だけで使う短い名前（英数字と - _）。parent・owner・material・when・label・category・candidates は key で指す。',
     '- 規則の候補は葉の key。規則の category は、候補の共通の祖先（積算士が箱を置く段）にする。',
     '- 同じものを二度作らない（同じ部材、同じ部屋）。',
+    "- 仕様（spec）は短く（品番と主な仕様だけ。60 字まで）。出力には上限があるので、長い説明で埋めない。",
     '- 読めない字が続くときは、その行・その項目を書かない。「？」や同じ文字を繰り返さない。表の中身は、ふつう切り抜きから読む（PDF のページだけでは、細かい表の字は読めないことが多い）。',
     '- 表は、全部の行・全部の箱を読む。途中で省略しない。配線表は、行の配線の書き方ごとに葉を 1 つ（同じ書き方の行は同じ葉）、系統は行ごとに 1 つ。',
   ].join('\n');
@@ -492,6 +493,8 @@
       },
     },
     required: ['pages', 'categories', 'components', 'label_trees', 'labels', 'rules', 'expected', 'systems', 'notes'],
+    // 出力の順。応答が上限で切れても、短くて大事なもの（ページ・覚え書き・系統）が先に残るように。長いカテゴリは後ろ
+    propertyOrdering: ['pages', 'notes', 'systems', 'label_trees', 'labels', 'categories', 'components', 'rules', 'expected'],
   };
 
   // いまのパレットを、機械に見せる短い文にする（同じものを同じ名前で書いてもらうため）
