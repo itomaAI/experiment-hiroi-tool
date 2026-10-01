@@ -189,11 +189,16 @@ await page.evaluate(() => self.__min.setTool('select'));
   const b = await state();
   const pt = await at(520, 200);
   await page.mouse.dblclick(pt.x, pt.y);
+  await page.waitForTimeout(200);
+  const nodbl = (await state()).nd === b.nd;
+  await page.mouse.click(pt.x, pt.y, { button: 'right' });
+  await page.waitForTimeout(200);
+  await page.click('.cand .ci:has-text("ここにノードを足す")');
   await page.waitForTimeout(300);
   const a = await state();
   const sel = await page.evaluate(() => self.__min.app.selection);
   const line = await page.evaluate(() => { const p = self.__min.store.state.pickups.find((x) => x.category === 'cat-1A2' && x.page === 'pg-036'); return p.path.length; });
-  ok(a.nd === b.nd + 1 && a.sg === b.sg + 1 && sel && sel.kind === 'node' && line === 3, '二度押し: ノード＋1・線分＋1、線の道は 3', { b, a, line });
+  ok(nodbl && a.nd === b.nd + 1 && a.sg === b.sg + 1 && sel && sel.kind === 'node' && line === 3, '二度押しではノードを足さない／右クリック「ここにノードを足す」: ノード＋1・線分＋1、線の道は 3', { nodbl, b, a, line });
 }
 // 範囲選択: 玄関まわりの箱を囲んで Delete
 {

@@ -928,9 +928,9 @@
    * ====================================================================== */
 
   const TOOLS = [
-    { id: 'select', name: '選ぶ', key: 'V', group: 'common', hint: '押して選ぶ（同じ場所をもう一度押すと 1 つ下。右ボタンで一覧）。空いた所をドラッグで範囲選択。線分を二度押しでノードを足す。ドラッグで動かす（ノード・箱・角。エリア・線・ルート・線分は選んでから引くと動く。エリアの角・線分の途中の角を引くと形が変わる）。パンは Space＋ドラッグかホイール。Delete で消す' },
+    { id: 'select', name: '選ぶ', key: 'V', group: 'common', hint: '押して選ぶ（同じ場所をもう一度押すと 1 つ下。右ボタンで一覧）。空いた所をドラッグで範囲選択。線分の上で右クリック →「ここにノードを足す」。ドラッグで動かす（ノード・箱・角。エリア・線・ルート・線分は選んでから引くと動く。エリアの角・線分の途中の角を引くと形が変わる）。パンは Space＋ドラッグかホイール。Delete で消す' },
     { id: 'box', name: '箱', key: 'B', group: 'pickup', hint: '引いて囲う。押すだけなら、直前と同じ大きさで置く。カテゴリは右の木で選ぶ' },
-    { id: 'line', name: '線', key: 'W', group: 'pickup', hint: '押して骨をたどる（既存のノードに吸着。線分の上なら切る。無ければ骨が出来る）。水平・垂直に揃う（Alt で自由）。Shift で曲がり角。↑↓ で立。Enter か二度押しで置く。長さはルートが与える' },
+    { id: 'line', name: '線', key: 'W', group: 'pickup', hint: '押して骨をたどる（既存のノードに吸着。線分の途中から分けるなら右クリックでノードを足す。無ければ骨が出来る）。水平・垂直に揃う（Alt で自由）。Shift で曲がり角。↑↓ で立。Enter か二度押しで置く。長さはルートが与える' },
     { id: 'area-rect', name: 'エリア（矩形）', key: 'R', group: 'layer', hint: '引いて囲む。囲むと、この範囲が何かを決める画面が開く' },
     { id: 'area-poly', name: 'エリア（多角形）', key: 'P', group: 'layer', hint: '押して角を打つ。最初の角を押すか、二度押しか、Enter で閉じる。Backspace で 1 つ戻る' },
     { id: 'route', name: 'ルート', key: 'L', group: 'layer', hint: '線をなぞる（骨をたどる。無ければ骨が出来る）。終えると、このルートが何か（ラベル・規則・長さ）を決める画面が開く。↑↓ で立。水平・垂直に揃う（Alt で自由）' },
@@ -1246,13 +1246,6 @@
           }
           grab.end(ev);
         },
-        // 二度押しで、線分の上にノードを足す（線・ルートの途中から枝を出すとき）
-        onDblClick(ev) {
-          const sh = ev.hits.find((x) => x.kind === 'segment');
-          if (!sh) return;
-          const r = edit('ノードを足す', (S) => S.splitSegment(sh.id, sh.at));
-          if (r) api.select({ kind: 'node', id: r.node });
-        },
         draw(g) {
           if (box && box.cur) strokeRect(g, [box.x, box.y], box.cur);
         },
@@ -1546,8 +1539,13 @@
     }
     function click(ev) {
       let pt = [ev.x, ev.y];
-      if (!d) begin();
       const sn0 = snapAt(pt);
+      // 線分の上を押しても切らない（ノードを足すのは右クリックだけ。誤操作が多かったため）
+      if (sn0 && sn0.segment && !(d && d.lastNode && d.created.has(sn0.segment))) {
+        setHintOnce('線分の上です。ここにノードを足すなら右クリック。既存の骨は、ノードを押してたどる');
+        return;
+      }
+      if (!d) begin();
       if (!sn0) pt = axisSnap(pt, ev.alt);
       if (ev.shift && d.lastNode) {
         d.corners.push([SM.round(pt[0], 1), SM.round(pt[1], 1)]);
@@ -1557,14 +1555,6 @@
       let nodeId = null;
       let fresh = false;
       if (sn0 && sn0.node) nodeId = sn0.node;
-      else if (sn0 && sn0.segment && !(d.lastNode && d.created.has(sn0.segment))) {
-        const r = store.splitSegment(sn0.segment, sn0.at);
-        if (r) {
-          nodeId = r.node;
-          const k = d.path.indexOf(sn0.segment);
-          if (k >= 0) d.path.splice(k, 1, ...r.segments);
-        }
-      }
       if (!nodeId) {
         nodeId = store.addNode(api.page().id, pt[0], pt[1]);
         fresh = true;
@@ -1595,6 +1585,20 @@
       if (!d.nodes.includes(nodeId)) d.nodes.push(nodeId);
       recompute();
       api.redraw();
+    }
+    // 右クリック: 線分の上ならノードを足す（引いている途中でもよい）
+    function addNodeAt(ev) {
+      const sh = api.hits(ev.x, ev.y).find((x) => x.kind === 'segment');
+      if (!sh) return;
+      if (d) {
+        const r = store.splitSegment(sh.id, sh.at);
+        if (!r) return;
+        const k = d.path.indexOf(sh.id);
+        if (k >= 0) d.path.splice(k, 1, ...r.segments);
+        recompute();
+        api.redraw();
+      } else if (!edit('ノードを足す', (S) => S.splitSegment(sh.id, sh.at))) return;
+      setHintOnce('ノードを足した。押すとそこからたどれる');
     }
     // 立の印（決定 24・45）: いまのノードに ↑↓ で立の線分を足し、そこへ進む
     function riser(level) {
@@ -1660,16 +1664,18 @@
       onMove(ev) {
         if (!d) {
           const sn = snapAt([ev.x, ev.y]);
-          api.cursor(sn ? 'pointer' : 'crosshair');
+          api.cursor(sn && sn.node ? 'pointer' : sn ? 'not-allowed' : 'crosshair');
           return;
         }
         const raw = [ev.x, ev.y];
         const sn = snapAt(raw);
-        d.snap = sn && sn.node ? [store.node(sn.node).x, store.node(sn.node).y] : sn && sn.segment ? sn.at.point : null;
+        // 吸い付くのはノードだけ（線分の上は押しても切らない。右クリックでノードを足す）
+        d.snap = sn && sn.node ? [store.node(sn.node).x, store.node(sn.node).y] : null;
         d.cursor = sn ? raw : axisSnap(raw, ev.alt);
         api.redraw();
       },
       onClick: click,
+      onContext: addNodeAt,
       onDblClick() {
         finish();
       },

@@ -332,6 +332,22 @@ await shot('m4_smoke_route_len');
   ok(a1 === '400,320 560,330' && sel && sel.kind === 'pickup' && a2 === '400,340 560,350', '線の端のノードを引く／線を選んで引くと骨ごと動く', { a1, sel, a2 });
 }
 
+// ノードを足すのは右クリックだけ: 線の道具で線分の途中を押しても切らない／右クリックで足す
+{
+  const cnt = () => page.evaluate(() => ({ nd: self.__min.store.state.nodes.length, sg: self.__min.store.state.segments.length }));
+  const b = await cnt();
+  await page.evaluate(() => self.__min.setTool('line'));
+  await click(480, 340);
+  await page.waitForTimeout(150);
+  const a1 = await cnt();
+  const p = await at(480, 340);
+  await page.mouse.click(p.x, p.y, { button: 'right' });
+  await page.waitForTimeout(150);
+  const a2 = await cnt();
+  ok(a1.nd === b.nd && a1.sg === b.sg && a2.nd === b.nd + 1 && a2.sg === b.sg + 1, '線分の途中を押しても切らない／右クリックでノードを足す', { b, a1, a2 });
+  await page.keyboard.press('Escape');
+}
+
 console.log('\nproblems:', problems.length ? problems : 'なし');
 console.log(failed ? 'FAILED ' + failed : 'ALL OK');
 await browser.close();
