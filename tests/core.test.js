@@ -237,3 +237,16 @@ test('パレットを丸ごと: 置き換え（使っている id が無けれ�
   assert.strictEqual(st5.format, 5);
   assert.strictEqual(st5.doc.pages, 76);
 });
+
+test('エリアの角: 辺に足す（矩形は多角形に）・消す（3 つより少なくしない）', () => {
+  const store = new SM.Store();
+  const id = store.commit('エリア', (st, S) => S.addArea('pg-001', { type: 'rect', points: [[0, 0], [100, 50]] }, null));
+  const i = store.commit('角', (st, S) => S.addAreaVertex(id, 50, 52));
+  assert.strictEqual(i, 3);
+  assert.deepStrictEqual(store.area(id).shape, { type: 'poly', points: [[0, 0], [100, 0], [100, 50], [50, 52], [0, 50]] });
+  assert.ok(store.commit('消す', (st, S) => S.removeAreaVertex(id, 3)));
+  assert.strictEqual(store.area(id).shape.points.length, 4);
+  store.commit('消す', (st, S) => S.removeAreaVertex(id, 0));
+  assert.strictEqual(store.commit('消す', (st, S) => S.removeAreaVertex(id, 0)), false);
+  assert.strictEqual(store.area(id).shape.points.length, 3);
+});

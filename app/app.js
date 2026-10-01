@@ -931,7 +931,7 @@
    * ====================================================================== */
 
   const TOOLS = [
-    { id: 'select', name: '選ぶ', key: 'V', group: 'common', hint: '押して選ぶ（同じ場所をもう一度押すと 1 つ下。右ボタンで一覧）。空いた所をドラッグで範囲選択。線分の上で右クリック →「ここにノードを足す」。ドラッグで動かす（ノード・箱・角。エリア・線・ルート・線分は選んでから引くと動く。エリアの角・線分の途中の角を引くと形が変わる）。パンは Space＋ドラッグかホイール。Delete で消す' },
+    { id: 'select', name: '選ぶ', key: 'V', group: 'common', hint: '押して選ぶ（同じ場所をもう一度押すと 1 つ下。右ボタンで一覧）。空いた所をドラッグで範囲選択。線分の上で右クリック →「ここにノードを足す」、エリアの辺の上なら「ここにエリアの角を足す」（角の上なら「この角を消す」）。ドラッグで動かす（ノード・箱・角。エリア・線・ルート・線分は選んでから引くと動く。エリアの角・線分の途中の角を引くと形が変わる）。パンは Space＋ドラッグかホイール。Delete で消す' },
     { id: 'box', name: '箱', key: 'B', group: 'pickup', hint: '引いて囲う。押すだけなら、直前と同じ大きさで置く。カテゴリは右の木で選ぶ' },
     { id: 'line', name: '線', key: 'W', group: 'pickup', hint: '押して骨をたどる（既存のノードに吸着。線分の途中から分けるなら右クリックでノードを足す。無ければ骨が出来る）。水平・垂直に揃う（Alt で自由）。Shift で曲がり角。↑↓ で立。Enter か二度押しで置く。長さはルートが与える' },
     { id: 'area-rect', name: 'エリア（矩形）', key: 'R', group: 'layer', hint: '引いて囲む。囲むと、この範囲が何かを決める画面が開く' },
@@ -1291,6 +1291,21 @@
           // 線分の上なら、ノードを足す行い
           const sh = hs.find((x) => x.kind === 'segment');
           if (sh) el.append(h('button', { class: 'ci', onclick: () => { off(); const r = edit('ノードを足す', (S) => S.splitSegment(sh.id, sh.at)); if (r) api.select({ kind: 'node', id: r.node }); } }, h('span', { class: 'ck', style: 'background:#0f172a' }, '＋'), 'ここにノードを足す（' + sh.id + '）'));
+          // エリアの辺・角の上なら、角を足す・消す行い（選んでいるエリアか、ここにあるエリア）
+          const tol = PX.border / app.view.scale;
+          const areaIds = [...new Set([].concat(app.selection && app.selection.kind === 'area' ? [app.selection.id] : [], hs.filter((x) => x.kind === 'area').map((x) => x.id)))];
+          for (const aid of areaIds) {
+            const ar = store.area(aid);
+            if (!ar || ar.page !== app.pageId || isFull(ar)) continue;
+            const poly = SM.geom.shapePolygon(ar.shape);
+            const vi = poly.findIndex((p) => SM.geom.dist(p, [ev.x, ev.y]) <= tol);
+            if (vi >= 0) {
+              if (poly.length > 3) el.append(h('button', { class: 'ci', onclick: () => { off(); edit('エリアの角を消す', (S) => S.removeAreaVertex(aid, vi)); api.select({ kind: 'area', id: aid }); } }, h('span', { class: 'ck', style: 'background:var(--layer)' }, '−'), 'この角を消す（エリア ' + aid + '）'));
+              continue;
+            }
+            const onEdge = poly.some((p, i) => SM.geom.distToSegment([ev.x, ev.y], p, poly[(i + 1) % poly.length]) <= tol);
+            if (onEdge) el.append(h('button', { class: 'ci', onclick: () => { off(); edit('エリアに角を足す', (S) => S.addAreaVertex(aid, ev.x, ev.y)); api.select({ kind: 'area', id: aid }); } }, h('span', { class: 'ck', style: 'background:var(--layer)' }, '＋'), 'ここにエリアの角を足す（' + aid + '）'));
+          }
           const off = float(el, ev.x, ev.y, { dx: 8, dy: 8 });
           const close = (e) => { if (!el.contains(e.target)) { off(); window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', esc, true); } };
           const esc = (e) => { if (e.key === 'Escape') { off(); window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', esc, true); } };

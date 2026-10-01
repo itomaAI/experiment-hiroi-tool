@@ -168,6 +168,22 @@ ok((await page.locator('.refwin').count()) === 0, '小窓を閉じる');
 // このページの覚え書き（p.2 に 1 つ）
 ok((await page.locator('#panel .pnotes .pnote').count()) === 1, '拾いの右に、このページの覚え書き', await page.locator('#panel .pnotes .pnote').count());
 
+// 拾いのタブ: エリアの辺に角を足す（右クリック）
+{
+  const lab = await page.evaluate(() => self.__min.store.state.palette.labels.find((l) => !l.root).id);
+  const aid = await page.evaluate((lab) => self.__min.store.commit('エリア', (st, S) => S.addArea('pg-002', { type: 'rect', points: [[200, 200], [400, 300]] }, lab)), lab);
+  await page.evaluate((aid) => { self.__min.app.selection = { kind: 'area', id: aid }; self.__min.renderAll(); }, aid);
+  const pt = await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); const [x, y] = self.__min.toScreen(300, 300); return { x: r.left + x, y: r.top + y }; });
+  await page.mouse.click(pt.x, pt.y, { button: 'right' });
+  await page.locator('.cand button:has-text("エリアの角を足す")').click();
+  const sh = await page.evaluate((aid) => self.__min.store.area(aid).shape, aid);
+  ok(sh.type === 'poly' && sh.points.length === 5, '右クリックでエリアの辺に角を足す（矩形 → 多角形 5 角）', sh);
+  await page.mouse.click(pt.x, pt.y, { button: 'right' });
+  await page.locator('.cand button:has-text("この角を消す")').click();
+  ok((await page.evaluate((aid) => self.__min.store.area(aid).shape.points.length, aid)) === 4, '角の上で右クリック →「この角を消す」');
+  await page.evaluate((aid) => self.__min.store.commit('消す', (st, S) => S.removeArea(aid)), aid);
+}
+
 // 7. 集計の照合・パレットの系統と見込み
 await page.click('#apptabs button[data-screen=sum]');
 await page.click('.subtabs button:has-text("照合")');
@@ -186,8 +202,8 @@ await shot('an_03_palette');
 
 // 8. 元に戻す: 解析の結果はまとめて戻る
 await page.click('#apptabs button[data-screen=analyze]');
-// 人の直し 5 つ（題・拾わない・覚え書き・系統・見込み）を戻し、6 回目で解析の結果
-for (let i = 0; i < 6; i++) await page.click('#b-undo');
+// 人の直し 5 つ（題・拾わない・覚え書き・系統・見込み）とエリアの 4 手（置く・角を足す・消す・エリアを消す）を戻し、10 回目で解析の結果
+for (let i = 0; i < 10; i++) await page.click('#b-undo');
 s = await st();
 ok(s.cats === 1 && s.notes === 0 && s.exp === 0, '元に戻すで、解析の結果がまとめて消える', s);
 // 9. 最後の応答をもう一度入れる

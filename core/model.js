@@ -800,6 +800,33 @@
         a.shape = Object.assign({}, a.shape, { points: pts });
       }
     }
+    /*
+     * エリアの辺に角を足す（いちばん近い辺に、x・y を入れる）。矩形は多角形になる。返すもの: 足した角の番号（無ければ -1）
+     */
+    addAreaVertex(id, x, y) {
+      const a = this.area(id);
+      if (!a) return -1;
+      const poly = G.shapePolygon(a.shape).map((p) => p.slice());
+      let best = { d: Infinity, i: -1 };
+      for (let i = 0; i < poly.length; i++) {
+        const d = G.distToSegment([x, y], poly[i], poly[(i + 1) % poly.length]);
+        if (d < best.d) best = { d, i };
+      }
+      if (best.i < 0) return -1;
+      poly.splice(best.i + 1, 0, [round(x, 1), round(y, 1)]);
+      a.shape = { type: 'poly', points: poly };
+      return best.i + 1;
+    }
+    // 多角形の角を消す（3 つより少なくはしない）。返すもの: 消せたか
+    removeAreaVertex(id, i) {
+      const a = this.area(id);
+      if (!a) return false;
+      const poly = G.shapePolygon(a.shape).map((p) => p.slice());
+      if (poly.length <= 3 || i < 0 || i >= poly.length) return false;
+      poly.splice(i, 1);
+      a.shape = { type: 'poly', points: poly };
+      return true;
+    }
     removeArea(id) {
       this.state.areas = this.state.areas.filter((a) => a.id !== id);
     }
