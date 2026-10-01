@@ -223,14 +223,6 @@
       store.replace(st);
       app.views = new Map();
     }
-    if (!o.stored) {
-      try {
-        await IDB.put('pdf', { name, fingerprint: fp, pages: n, bytes });
-      } catch (e) {
-        console.warn(e);
-        toast('PDF をブラウザに残せなかった（次に開くとき、もう一度選んでください）', 4000);
-      }
-    }
     app.pageId = null;
     // 拾うページの印が無ければ、図面解析のタブから始める
     setScreen(store.state.pages.some((p) => p.pick === true) ? 'pick' : 'analyze');
@@ -239,6 +231,15 @@
     setPage((withWork || pp[0] || store.state.pages[0]).id);
     recompute();
     renderAll();
+    // PDF をブラウザに残すのは、画面を切り替えたあと（大きい PDF だと数秒かかり、その間 前の画面が見えていたため）
+    if (!o.stored) {
+      try {
+        await IDB.put('pdf', { name, fingerprint: fp, pages: n, bytes });
+      } catch (e) {
+        console.warn(e);
+        toast('PDF をブラウザに残せなかった（次に開くとき、もう一度選んでください）', 4000);
+      }
+    }
     toast((same ? 'つなぎ直した: ' : '開いた: ') + name + '（' + n + ' ページ）', 2500);
     return true;
   }
