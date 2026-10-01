@@ -234,8 +234,9 @@
     app.pageId = null;
     // 拾うページの印が無ければ、図面解析のタブから始める
     setScreen(store.state.pages.some((p) => p.pick === true) ? 'pick' : 'analyze');
-    const withWork = store.state.pages.find((p) => store.pickupsOn(p.id).length || store.areasOn(p.id).some((a) => !isFull(a)));
-    setPage((withWork || store.state.pages[0]).id);
+    const pp = SMA.pickPages(store.state);
+    const withWork = pp.find((p) => store.pickupsOn(p.id).length || store.areasOn(p.id).some((a) => !isFull(a)));
+    setPage((withWork || pp[0] || store.state.pages[0]).id);
     recompute();
     renderAll();
     toast((same ? 'つなぎ直した: ' : '開いた: ') + name + '（' + n + ' ページ）', 2500);
@@ -2892,6 +2893,11 @@
     for (const b of $$('#apptabs button')) b.classList.toggle('on', b.dataset.screen === id);
     for (const sc of $$('.screen')) sc.classList.toggle('on', sc.id === 'screen-' + id);
     closeMenu();
+    // 拾いのタブでは、「拾う」のページだけを出す。いまのページがその外なら、最初の「拾う」のページへ
+    if (id === 'pick' && store.state.pages.length) {
+      const pp = SMA.pickPages(store.state);
+      if (pp.length && !pp.some((p) => p.id === app.pageId)) setPage(pp[0].id);
+    }
     if (id === 'pick') setTimeout(() => { resize(); if (app.needFit) fit(); else applyView(); }, 0);
     if (id === 'analyze' && anScreen) anScreen.shown();
     renderAll();

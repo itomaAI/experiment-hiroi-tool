@@ -155,6 +155,7 @@ await page.click('#apptabs button[data-screen=pick]');
 await page.waitForTimeout(300);
 ok((await page.locator('#pages .item').count()) === 1, '拾いタブには「拾う」のページだけ（p.2）', await page.locator('#pages .item').count());
 ok((await page.locator('#pagecount').textContent()).includes('1 / 3'), '枚数の表示「1 / 3 枚」');
+ok((await page.evaluate(() => self.__min.app.pageId)) === 'pg-002', '拾いのタブを開くと、「拾う」のページ（p.2）が出る', await page.evaluate(() => self.__min.app.pageId));
 // 参照の小窓
 await page.click('#b-ref');
 ok((await page.locator('.refmenu button').count()) === 2, '「参照 ▾」に注釈が 2 つ', await page.locator('.refmenu button').count());
