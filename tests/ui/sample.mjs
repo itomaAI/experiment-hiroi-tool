@@ -98,7 +98,7 @@ await page.waitForTimeout(400);
 ok(await modal(), 'エリアを囲むとモーダルが開く');
 await page.fill('.modal input.search', '東門');
 await page.waitForTimeout(100);
-await page.click('.modal .am-v');
+await page.click('.modal .am-v:not(.none)');
 await page.waitForTimeout(200);
 await page.keyboard.press('Control+Enter');
 await page.waitForTimeout(300);
@@ -132,7 +132,7 @@ ok((await state()).sg === 11, 'なぞっただけなので骨は増えない', a
 await page.fill('.modal input[data-role=len-h]', '15');
 await page.fill('.modal input.search', '天井内');
 await page.waitForTimeout(100);
-await page.click('.modal .am-v');
+await page.click('.modal .am-v:not(.none)');
 await page.waitForTimeout(300);
 const pv = await page.evaluate(() => (document.querySelector('.modal .sum') || {}).textContent);
 ok(pv && pv.includes('長さ 平 15'), '下見: 長さと層', pv);

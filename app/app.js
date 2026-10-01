@@ -1927,12 +1927,27 @@
       draw();
     }
     function pickNode(id) {
+      // 選んである節をもう一度押すと外す（新しく置くときだけ。ルートなら長さだけにできる）
+      if (!editing && d.node === id && d.fresh === null) {
+        clearLabel();
+        return;
+      }
       d.node = id;
       d.fresh = null;
       loadRules();
       draw();
     }
+    function clearLabel() {
+      d.node = null;
+      d.fresh = null;
+      d.rules = [];
+      draw();
+    }
     function pickFresh(name) {
+      if (!editing && d.fresh === name) {
+        clearLabel();
+        return;
+      }
       d.node = null;
       d.fresh = name;
       if (!d.parent) d.parent = lastParent && P().labelRoot(lastParent) === d.root ? lastParent : d.root;
@@ -1992,7 +2007,7 @@
     elSearch.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || e.ctrlKey || e.metaKey) return;
       e.preventDefault();
-      const first = elValues.querySelector('.am-v');
+      const first = elValues.querySelector('.am-v:not(.none)');
       if (first) first.click();
     });
 
@@ -2031,6 +2046,11 @@
           h('button', { class: 'am-v' + (d.node === id && d.fresh === null ? ' on' : ''), onclick: () => pickNode(id) }, h('span', { class: 'bar', style: 'background:' + l.color }), h('span', { class: 'nm' }, path.length > 1 ? h('span', { class: 'path' }, path.slice(0, -1).join(' / ') + ' / ') : null, l.name), nRules ? h('span', { class: 'bd' }, '規則 ' + nRules) : null, nAreas ? h('span', { class: 'bd' }, '層 ' + nAreas) : null),
         );
       }
+      // 新しいルート: ラベルを付けず、長さだけにする行
+      if (isRoute && !route) {
+        const none = !chosen();
+        elValues.prepend(h('button', { class: 'am-v none' + (none ? ' on' : ''), 'data-role': 'no-label', onclick: clearLabel }, h('span', { class: 'plus' }, '—'), h('span', { class: 'nm' }, 'ラベルなし（長さだけ）')));
+      }
       const exact = ids.some((id) => pal.label(id).name === q);
       if (q && !exact) elValues.append(h('button', { class: 'am-v new' + (d.fresh === q ? ' on' : ''), onclick: () => pickFresh(q) }, h('span', { class: 'plus' }, '＋'), h('span', { class: 'nm' }, '「' + q + '」を、新しく足す')));
       if (!ids.length && !q) elValues.append(h('div', { class: 'empty' }, 'まだ節がありません。上の欄に名前を書いて、足してください'));
@@ -2044,7 +2064,7 @@
     // ルートの長さ（長さルート）
     function drawLen() {
       elLen.innerHTML = '';
-      if (!isRoute) return;
+      if (!isRoute || route) return;
       const inH = h('input', { type: 'number', step: '0.1', value: d.h === null ? '' : d.h, placeholder: '平 m', 'data-role': 'len-h', style: 'width:72px' });
       const inV = h('input', { type: 'number', step: '0.1', value: d.v === null ? '' : d.v, placeholder: '立 m', 'data-role': 'len-v', style: 'width:72px' });
       inH.addEventListener('input', () => { d.h = inH.value === '' ? null : inH.value; drawRight(); });
@@ -2233,7 +2253,7 @@
     }
     loadRules();
     // ルート: 同じ線分の集まりにもう長さがあれば、欄に入れておく
-    if (isRoute) {
+    if (isRoute && !route) {
       const ex0 = existingLen();
       if (ex0) {
         d.h = ex0.length_h;
@@ -2384,12 +2404,17 @@
       const inH = h('input', { type: 'number', step: '0.1', value: r.length_h === null ? '' : r.length_h, placeholder: '平 m', style: 'width:64px' });
       const inV = h('input', { type: 'number', step: '0.1', value: r.length_v === null ? '' : r.length_v, placeholder: '立 m', style: 'width:64px' });
       const ap = () => edit('ルートの長さ', (S) => setLengthOn(S, r.page, r.segments, inH.value, inV.value));
+      inH.setAttribute('data-role', 'lr-h');
+      inV.setAttribute('data-role', 'lr-v');
       inH.addEventListener('change', ap);
       inV.addEventListener('change', ap);
       rows.push(h('span', { class: 'k' }, '長さ'), h('span', {}, '平 ', inH, ' 立 ', inV, ' m'));
     } else {
       const l = pal.label(r.label);
-      rows.push(h('span', { class: 'k' }, '長さ'), lengthInputs(r.page, r.segments, 'ルートに長さを入れる', 'rlen'));
+      const lr = lengthRouteOn(r.segments);
+      rows.push(h('span', { class: 'k' }, '長さ'), lr
+        ? h('span', {}, h('a', { href: '#', 'data-role': 'goto-len', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'route', id: lr.id }; renderAll(); } }, '長さルート ' + lengthText(lr) + ' →'))
+        : h('button', { 'data-role': 'add-len', title: 'このルートと同じ線分の集まりに、長さルートを置く', onclick: () => addLengthRouteFor(r) }, '＋ 同じ線分に長さルートを置く'));
       rows.push(h('span', { class: 'k' }, 'ラベル'), h('span', {}, lchip(r.label)), h('span', { class: 'k' }, '規則'), h('span', {}, l && l.rules.length ? l.rules.map((x) => pal.category(x.category).name + ' → ' + x.candidates.map((c) => pal.category(c).name).join('・')).join('／') : h('span', { class: 'muted' }, 'なし')));
     }
     // 同じ線分を覆うほかのルート
@@ -2397,7 +2422,7 @@
     return h('div', { class: 'sec' }, head('layer', '選んだ層: ルート'),
       h('div', { class: 'detail' },
         h('div', { class: 'kv' }, ...rows, h('span', { class: 'k' }, '通る線'), h('span', {}, through.size ? [...through].map((id) => { const p = store.pickup(id); return h('a', { href: '#', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'pickup', id }; renderAll(); } }, (p.name || p.id) + ' ' + pal.category(p.category).name); }) : 'なし'), h('span', { class: 'k' }, '重なるルート'), h('span', {}, others.length ? others.map((x) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); app.selection = { kind: 'route', id: x.id }; renderAll(); } }, routeName(pal, x) + ' ')) : 'なし')),
-        h('div', { class: 'muted', style: 'margin:4px 0' }, isLen ? '長さは、通る線がこのルートの全部の線分を通るとき、1 回だけ数える。線の側に線分ごとの上書きがあれば、そちらが勝つ（旗「上書き」）。平・立とも空にすると、長さルートを外す' : 'ラベルは、覆う線分を通る線に効く（祖先の節の規則も）。同じ木のラベルを同じ線分に重ねると置き換わる。長さは、同じ線分の集まりに掛かる長さルートとして入る（ラベルの規則ではない）。空にすると外す'),
+        h('div', { class: 'muted', style: 'margin:4px 0' }, isLen ? '長さは、通る線がこのルートの全部の線分を通るとき、1 回だけ数える。線の側に線分ごとの上書きがあれば、そちらが勝つ（旗「上書き」）。平・立とも空にすると、長さルートを外す' : 'ラベルは、覆う線分を通る線に効く（祖先の節の規則も）。同じ木のラベルを同じ線分に重ねると置き換わる。長さはラベルではなく別の層（長さルート）。一部だけ重なる長さルートは「重なるルート」に出る'),
         h('div', { class: 'acts' }, isLen ? null : h('button', { class: 'primary', onclick: async () => { const id = await openLayerModal({ route: r.id }); if (id) { app.selection = { kind: 'route', id }; renderAll(); } } }, '意味・規則を直す…'), h('button', { class: 'danger', onclick: () => edit('ルートを外す', (S) => S.removeRoute(r.id)) }, 'ルートを外す（骨は残す）'), h('button', { class: 'danger', onclick: deleteSelection, disabled: through.size ? '' : null }, '骨ごと消す'))));
   }
   // 線分の集まり（ちょうどその集まり）に掛かっている長さルート
@@ -2429,6 +2454,17 @@
     inH.addEventListener('change', ap);
     inV.addEventListener('change', ap);
     return h('span', {}, '平 ', inH, ' 立 ', inV, ' m');
+  }
+  // ラベルルートと同じ線分の集まりに、長さルートを置く（平・立を訊く）→ 置いた長さルートを選ぶ
+  async function addLengthRouteFor(r) {
+    const inH = h('input', { type: 'number', step: '0.1', placeholder: '平 m', style: 'width:80px', 'data-role': 'newlen-h' });
+    const inV = h('input', { type: 'number', step: '0.1', placeholder: '立 m', style: 'width:80px', 'data-role': 'newlen-v' });
+    const m = openModal({ title: '長さルートを置く（' + r.segments.length + ' 線分）', width: 420, dismiss: true, body: h('div', {}, h('div', {}, '平 ', inH, '　立 ', inV, ' m'), h('div', { class: 'muted', style: 'margin-top:6px' }, 'このラベルルートと同じ線分の集まりに、長さの層を 1 枚置きます。線分ごとに違う長さなら、線分を選んで「この線分の長さ」で入れてください。')), onKey: (e, hd) => { if (e.key === 'Enter') { e.preventDefault(); hd.close('ok'); } }, actions: ['spacer', { label: 'やめる', id: 'cancel' }, { label: '置く', primary: true, id: 'ok' }] });
+    setTimeout(() => inH.focus(), 30);
+    if ((await m.result) !== 'ok') return;
+    if (inH.value === '' && inV.value === '') return toast('平か立のどちらかを入れてください', 2500);
+    const id = edit('長さルートを置く', (S) => setLengthOn(S, r.page, r.segments, inH.value, inV.value));
+    if (id) { app.selection = { kind: 'route', id }; renderAll(); }
   }
   const routeName = (pal, r) => (r.label ? pal.labelPath(r.label).join('/') : '長さ ' + lengthText(r)) + '（' + r.segments.length + '）';
 

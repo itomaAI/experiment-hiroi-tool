@@ -243,3 +243,6 @@ button.big { padding: 9px 20px; font-size: 15px; }
 .menu { position: fixed; z-index: 60; min-width: 260px; padding: 4px; background: #fff; border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 10px 30px rgba(15,23,42,.2); }
 .menu button { display: block; width: 100%; text-align: left; border: 0; padding: 6px 10px; }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+.am-v.none { color: var(--dim); }
+.am-v.none.on { color: var(--accent); }
