@@ -80,3 +80,10 @@ textarea.paste { width: 100%; font: 13px/1.5 ui-monospace, "SFMono-Regular", Men
 .ptbl.sys tr.done td { background: #f0fdf4; }
 .ptbl td.num, .ptbl th.num { text-align: right; }
 .ai { font-size: 9px; font-weight: 700; color: #7c3aed; border: 1px solid #c4b5fd; border-radius: 3px; padding: 0 3px; background: #f5f3ff; margin-right: 3px; }
+.ogrip { width: 12px; flex: none; color: #cbd5e1; cursor: grab; font-size: 11px; letter-spacing: -2px; user-select: none; touch-action: none; }
+.orow:hover .ogrip { color: #64748b; }
+.ogrip.off { cursor: default; }
+.orow.dragging { opacity: .45; }
+.orow.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.orow.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.orow.drop-into { background: var(--accent-soft); outline: 1px dashed var(--accent); outline-offset: -1px; }

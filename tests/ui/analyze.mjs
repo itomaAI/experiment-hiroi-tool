@@ -189,6 +189,27 @@ await page.click('#apptabs button[data-screen=sum]');
 await page.click('.subtabs button:has-text("照合")');
 ok((await page.locator('.sumbody table tr').count()) === 3, '照合: パレットの見込み 2 行', await page.locator('.sumbody table tr').count());
 await page.click('#apptabs button[data-screen=palette]');
+// アウトライナー: ⋮⋮ を引いて動かす
+{
+  const rowOf = (name) => page.locator('.orow').filter({ has: page.locator('input.oname[value="' + name + '"]') });
+  const parentName = (name) => page.evaluate((n) => { const pal = self.__min.palette; const c = pal.categories.find((x) => x.name === n); return pal.category(c.parent).name; }, name);
+  const dragTo = async (name, target, frac) => {
+    const g = await rowOf(name).locator('.ogrip').boundingBox();
+    const t = await rowOf(target).boundingBox();
+    await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(t.x + 60, t.y + t.height * frac, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForTimeout(150);
+  };
+  await dragTo('DL-2', 'ベースライト', 0.5);
+  ok((await parentName('DL-2')) === 'ベースライト', '⋮⋮ を行の真ん中へ引くと、その子になる', await parentName('DL-2'));
+  await dragTo('DL-2', 'DL-1', 0.1);
+  const order = await page.evaluate(() => { const pal = self.__min.palette; const dl = pal.categories.find((x) => x.name === 'ダウンライト'); return pal.categoryChildren(dl.id).map((c) => c.name); });
+  ok(JSON.stringify(order) === '["DL-2","DL-1"]', '行の上の端へ引くと、その前に並ぶ', order);
+  await dragTo('ダウンライト', 'DL-2', 0.5);
+  ok((await parentName('ダウンライト')) === '照明器具', '自分の子孫の中へは動かない');
+}
 await page.click('.pnav .pk:has-text("系統")');
 ok((await page.locator('.ptbl.sys tr').count()) === 3, 'パレット: 系統 2 行');
 await page.locator('.ptbl.sys tr').nth(1).locator('input').nth(2).fill('L-2A');
@@ -203,7 +224,7 @@ await shot('an_03_palette');
 // 8. 元に戻す: 解析の結果はまとめて戻る
 await page.click('#apptabs button[data-screen=analyze]');
 // 人の直し 5 つ（題・拾わない・覚え書き・系統・見込み）とエリアの 4 手（置く・角を足す・消す・エリアを消す）を戻し、10 回目で解析の結果
-for (let i = 0; i < 10; i++) await page.click('#b-undo');
+for (let i = 0; i < 30 && (await page.evaluate(() => self.__min.store.state.analysis.runs.length)) > 0; i++) await page.click('#b-undo');
 s = await st();
 ok(s.cats === 1 && s.notes === 0 && s.exp === 0, '元に戻すで、解析の結果がまとめて消える', s);
 // 9. 最後の応答をもう一度入れる

@@ -179,7 +179,7 @@
       };
       walk(T[kind].tops(pal), 0);
       if (!list.children.length) list.append(h('div', { class: 'empty', style: 'margin:10px' }, kind === 'label' ? 'まだラベルがありません。「＋ 木」で木（部屋・階・敷設 など）を足すか、「まとめて貼り付け」で一度に足してください。' : '見つかりません'));
-      const keys = h('div', { class: 'okeys' }, 'Enter 兄弟を足す ・ Tab 子にする ・ Shift+Tab 戻す ・ Alt+↑↓ 並べ替え ・ ↑↓ 移る ・ 空の名前で Backspace 消す ・ Ctrl+Z 元に戻す（名前の欄の外で）');
+      const keys = h('div', { class: 'okeys' }, '⋮⋮ を引いて動かす ・ Enter 兄弟を足す ・ Tab 子にする ・ Shift+Tab 戻す ・ Alt+↑↓ 並べ替え ・ ↑↓ 移る ・ 空の名前で Backspace 消す ・ Ctrl+Z 元に戻す（名前の欄の外で）');
       return h('div', { class: 'pcenter' }, head, list, keys);
     }
     function matchDeep(kind, pal, id, q) {
@@ -217,7 +217,61 @@
         ? h('span', { class: 'odot', style: kids.length || fixed ? 'background:transparent;border-color:transparent' : 'background:' + catColor(id) })
         : h('span', { class: 'odot', style: 'background:' + (x.color || '#94a3b8') });
       const tg = h('span', { class: 'otg', onclick: (e) => { e.stopPropagation(); const set = st.collapsed[kind]; if (set.has(id)) set.delete(id); else set.add(id); render(); } }, kids.length && !fixed ? (st.collapsed[kind].has(id) ? '▸' : '▾') : '');
-      return h('div', { class: 'orow' + (on ? ' on' : '') + (fixed ? ' fixed' : '') + (kind === 'label' && x.root ? ' head' : ''), 'data-id': id, style: '--d:' + depth, onpointerdown: (e) => { if (e.target === input) return; st.sel[kind] = id; st.focus = { kind, id }; render(); } }, tg, dot, input, badges);
+      const grip = fixed ? h('span', { class: 'ogrip off' }) : h('span', { class: 'ogrip', title: '引いて動かす（行の上の端・下の端なら前後に、真ん中なら子に）', onpointerdown: (e) => startDrag(e, kind, id) }, '⋮⋮');
+      return h('div', { class: 'orow' + (on ? ' on' : '') + (fixed ? ' fixed' : '') + (kind === 'label' && x.root ? ' head' : ''), 'data-id': id, style: '--d:' + depth, onpointerdown: (e) => { if (e.target === input || e.target === grip) return; st.sel[kind] = id; st.focus = { kind, id }; render(); } }, grip, tg, dot, input, badges);
+    }
+
+    /* ---------------- 引いて動かす ---------------- */
+    // 行の上 1/4 → 前へ、下 1/4 → 後ろへ、真ん中 → 子の最後へ
+    function dropAt(kind, id, clientX, clientY) {
+      const t = document.elementFromPoint(clientX, clientY);
+      const r = t && t.closest && t.closest('.orow');
+      if (!r || !el.contains(r)) return null;
+      const tid = r.dataset.id;
+      const pal = P();
+      if (tid === id) return null;
+      const under = (a, b) => { let c = a; while (c) { if (c === b) return true; c = T[kind].parentOf(pal, c); } return false; };
+      if (under(tid, id)) return null; // 自分の子孫の中へは動かせない
+      const box = r.getBoundingClientRect();
+      const f = (clientY - box.top) / box.height;
+      let zone = f < 0.25 ? 'before' : f > 0.75 ? 'after' : 'into';
+      if (T[kind].isFixed(pal, tid)) zone = 'into';
+      const par = T[kind].parentOf(pal, tid);
+      if (kind === 'category' && zone !== 'into' && par === null) zone = 'into';
+      let move;
+      if (zone === 'into') move = { parent: tid, before: null };
+      else if (zone === 'before') move = { parent: par, before: tid };
+      else {
+        const sib = siblings(kind, pal, tid).filter((x) => x !== id);
+        move = { parent: par, before: sib[sib.indexOf(tid) + 1] || null };
+      }
+      return { row: r, zone, move };
+    }
+    function startDrag(e, kind, id) {
+      e.preventDefault();
+      e.stopPropagation();
+      const src = el.querySelector('.orow[data-id="' + CSS.escape(id) + '"]');
+      if (src) src.classList.add('dragging');
+      let cur = null;
+      const clear = () => { for (const r of el.querySelectorAll('.orow.drop-before, .orow.drop-after, .orow.drop-into')) r.classList.remove('drop-before', 'drop-after', 'drop-into'); };
+      const mv = (ev) => {
+        clear();
+        cur = dropAt(kind, id, ev.clientX, ev.clientY);
+        if (cur) cur.row.classList.add('drop-' + cur.zone);
+      };
+      const up = (ev) => {
+        window.removeEventListener('pointermove', mv, true);
+        window.removeEventListener('pointerup', up, true);
+        clear();
+        if (src) src.classList.remove('dragging');
+        cur = dropAt(kind, id, ev.clientX, ev.clientY);
+        if (!cur) return;
+        if (cur.zone === 'into') st.collapsed[kind].delete(cur.move.parent);
+        const ok = edit(cur.zone === 'into' ? '子にする（引いて）' : '並べ替え（引いて）', (S) => { T[kind].move(S, id, cur.move.parent, cur.move.before); return true; });
+        if (ok) { st.sel[kind] = id; focusRow(id); }
+      };
+      window.addEventListener('pointermove', mv, true);
+      window.addEventListener('pointerup', up, true);
     }
     function markSelected(kind, id) {
       for (const r of el.querySelectorAll('.orow')) r.classList.toggle('on', r.dataset.id === id);
