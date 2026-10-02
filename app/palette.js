@@ -103,8 +103,12 @@
       if (st.sel.category && !pal.category(st.sel.category)) st.sel.category = 'cat-root';
       if (st.sel.label && !pal.label(st.sel.label)) st.sel.label = null;
       const u = usage();
+      // 描き直しでスクロールの位置を失わない（同じ種類の画面のときだけ）
+      const keep = st.scrollKind === st.kind ? ['.olist', '.pright', '.pnav'].map((q) => { const x = el.querySelector(q); return x ? [x.scrollTop, x.scrollLeft] : [0, 0]; }) : null;
+      st.scrollKind = st.kind;
       el.innerHTML = '';
       el.append(nav(pal), center(pal, u), right(pal, u));
+      if (keep) ['.olist', '.pright', '.pnav'].forEach((q, i) => { const x = el.querySelector(q); if (x) { x.scrollTop = keep[i][0]; x.scrollLeft = keep[i][1]; } });
       st.rendering = false;
       if (st.focus) {
         const f = st.focus;

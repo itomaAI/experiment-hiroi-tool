@@ -115,6 +115,8 @@
      * ====================================================================== */
     const isUnchecked = (p) => (p.tagBy && Object.values(p.tagBy).includes('llm') && !p.checked) || p.pickBy === 'llm';
     function renderLeft() {
+      const oldList = left.querySelector('.an-pages');
+      const sy = oldList ? oldList.scrollTop : 0;
       left.innerHTML = '';
       const ps = pages();
       const counts = { all: ps.length, send: ps.filter((p) => p.send).length, pick: ps.filter((p) => p.pick === true).length, todo: ps.filter(isUnchecked).length };
@@ -141,6 +143,7 @@
       const list = h('div', { class: 'list an-pages' });
       left.append(list);
       renderList(list);
+      list.scrollTop = sy;
     }
     function renderList(listEl) {
       const list = listEl || left.querySelector('.an-pages');
@@ -568,6 +571,11 @@
     function renderRight() {
       ensure();
       if (!st.rtab) st.rtab = (store.state.analysis.runs || []).length ? 'page' : 'run';
+      const oldBody = right.querySelector('.an-rbody');
+      // 同じ欄・同じページ（注釈）のときだけ、スクロールの位置を残す
+      const key = st.rtab + '|' + (st.rtab === 'annot' ? st.sel : st.pageId);
+      const ry = oldBody && st.rKey === key ? oldBody.scrollTop : 0;
+      st.rKey = key;
       right.innerHTML = '';
       const nNotes = store.state.analysis.notes.length;
       const nAnn = (store.state.annotations || []).length;
@@ -580,6 +588,7 @@
       else if (st.rtab === 'annot') renderAnnotPanel(body);
       else if (st.rtab === 'notes') renderNotesPanel(body);
       else renderRunPanel(body);
+      body.scrollTop = ry;
     }
 
     const ai = (on) => (on ? h('span', { class: 'ai', title: '解析が書いた値（直すと人の値になる）' }, 'AI') : null);

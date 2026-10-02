@@ -2358,8 +2358,11 @@
 
   function renderPanel() {
     const el = $('#panel');
+    const sc = $('#right');
+    const sy = sc.scrollTop;
     el.innerHTML = '';
     el.append(secPageNotes() || '', secCategoryTree(), secDetail());
+    sc.scrollTop = sy;
   }
   // このページの要約と覚え書き（図面解析で入れたもの。済んでいないもの）
   function secPageNotes() {
@@ -2602,6 +2605,9 @@
   const hasExpected = () => palExpected().length > 0 || (!!P().label('lb-room-01') && !!P().category('cat-GS100'));
   function renderSum() {
     const el = $('#sum');
+    const ob = el.querySelector('.sumbody');
+    const sy = ob && app.sumScrollTab === app.sumTab ? [ob.scrollTop, ob.scrollLeft] : [0, 0];
+    app.sumScrollTab = app.sumTab;
     el.innerHTML = '';
     const tabs = [['table', '集計表'], ['objects', '対象の一覧']];
     if (hasExpected()) tabs.push(['check', '照合（器具表）']);
@@ -2610,6 +2616,8 @@
       h('div', { class: 'subtabs' }, ...tabs.map(([id, name]) => h('button', { class: app.sumTab === id ? 'on' : '', onclick: () => { app.sumTab = id; renderSum(); } }, name)), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, '表の行・セルを押すと、拾いの画面でその場所へ')),
       h('div', { class: 'sumbody bbody' }, app.sumTab === 'objects' ? viewObjects() : app.sumTab === 'check' ? viewCheck() : viewTable()),
     );
+    const nb = el.querySelector('.sumbody');
+    if (nb) { nb.scrollTop = sy[0]; nb.scrollLeft = sy[1]; }
   }
   function selectPickup(id, pageId) {
     setScreen('pick');
@@ -2805,6 +2813,7 @@
   }
   function renderPages() {
     const el = $('#pages');
+    const sy = el.scrollTop;
     el.innerHTML = '';
     const all = store.state.pages;
     const pages = SMA.pickPages(store.state);
@@ -2825,6 +2834,7 @@
     }
     if (!pages.length) el.append(h('div', { class: 'empty', style: 'margin:8px' }, '図面の PDF を開くと、ここにページが並びます'));
     else if (pages.length < all.length) el.append(h('div', { class: 'muted', style: 'margin:8px' }, '図面解析で「拾う」に印を付けたページだけを出しています（ほかに ' + (all.length - pages.length) + ' 枚）。', h('a', { href: '#', onclick: (e) => { e.preventDefault(); setScreen('analyze'); } }, '図面解析へ')));
+    el.scrollTop = sy;
   }
   function renderChips() {
     const el = $('#chips');

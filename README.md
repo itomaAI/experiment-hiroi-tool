@@ -81,6 +81,7 @@ open http://127.0.0.1:8792/app/index.html
 | `app/palette.js`・`app/palette.css` | 画面（パレット） |
 | `app/analyze.js`・`app/analyze.css` | 画面（図面解析）と、Gemini への送り方 |
 | `tests/core.test.js`・`tests/analysis.test.js` | コアの試験（`node --test tests/core.test.js tests/analysis.test.js`） |
+| `tests/ui/scroll.mjs` | 描き直しでスクロールの位置を失わないこと（白紙の PDF 40 ページ） |
 | `tests/ui/analyze.mjs` | 図面解析の画面の試験（白紙の PDF。Gemini には送らず、作り物の応答を返す差し替えの口で通す） |
 | `tests/ui/smoke.mjs` | 画面の試験（playwright。白紙の PDF を作って通す。`npm install` のあと `node tests/ui/smoke.mjs`） |
 | `tests/ui/sample.mjs` | サンプル図面での試験（PDF は公開していないので、`data/sample.pdf` が在るときだけ走る） |
