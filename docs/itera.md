@@ -29,11 +29,14 @@ Itera の AI（エンジン）に、次の道具を公開します（`MetaOS.too
 | `hiroi_undo` | 最後の編集を元に戻す |
 | `hiroi_open path=` | VFS の PDF を開く |
 | `hiroi_show screen= page=` | 画面（タブ・ページ）を切り替える |
+| `hiroi_detect action= page= category= threshold= ids=` | GP の提案（[docs/gp.md](gp.md)）。`prepare`（ページの特徴量を用意する）／`search`（手本から探す。カテゴリは id か名前）／`approve`・`reject`（提案を承認・退ける。`ids` で選ぶ、省けば閾値の上を全部） |
 
-AI が書いたものは `by: "llm"` を持ちます（図面解析と同じ）。
+AI が書いたものは `by: "llm"` を持ちます（図面解析と同じ）。AI が承認した提案の箱は `by: "gp"` です。
+
+GP の特徴抽出器（ONNX・3.7 MB）は、VFS の `data/apps/hiroi-tool/gp_features_v1.onnx`（無ければ `system/demo/hiroi/model/`）から読みます。どちらにも無ければ、ホストのオリジンの `/demo/hiroi/gp_features_v1.onnx` を `MetaOS.net.download` で落として VFS に置きます（配信物の `public/demo/hiroi/` に置く）。
 
 典型的な流れ: `hiroi_status` → `hiroi_page`（表の場所を見る）→ `hiroi_annotate`（器具表を囲う）→ `hiroi_crop` → 画像を読む → `hiroi_apply`（その表の分）→ 次の注釈へ。利用者が「この部屋の規則を直して」と言えば、同じ `hiroi_apply` で直せます。
 
 ## 試験
 
-`node --test tests/itera.test.js`（MetaOS を偽物にして、道具の登録・`hiroi_apply`・`hiroi_annotate`・保存を通す。画像を描く道具は canvas が要るので、Itera の上で確かめる）。
+`node --test tests/itera.test.js`（MetaOS を偽物にして、道具の登録・`hiroi_apply`・`hiroi_annotate`・`hiroi_detect`（口「検出」も偽物）・保存を通す。画像を描く道具と特徴量の計算は canvas と Worker が要るので、Itera の上で確かめる）。
