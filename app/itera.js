@@ -276,7 +276,7 @@ Note: 一度に全部を書こうとしない。注釈 1 つ読んだら、そ�
 図面の上に注釈（読みどころ）を囲う。人が囲うのと同じもの（図面解析のタブに出る）。囲ったら hiroi_crop で読める。
 Attributes:
   - page (required): ページ番号（1 始まり）
-  - bbox (required): "x,y,w,h"（PDF のポイント。原点は左上。hiroi_page の画像の画素 ÷ (dpi/72) で換算）
+  - bbox (required): "x,y,w,h"（PDF のポイント。**原点は左上、y は下向き**。hiroi_page の戻りにある「1 px = k pt」を掛けて換算: x_pt = x_px × k。w・h も同じ）
   - kind (optional): spec（仕様書）| legend（凡例）| schedule（機器表）| wiring（配線表）| note（注記）| layer（層の手がかり）| object（対象の見本）| caution（注意）| title（題欄）。既定 schedule
   - title (optional): 題（例 "器具表"）
   - note (optional): 覚え書き（読むときの注意）
@@ -309,7 +309,8 @@ Attributes:
         const pg = pageByNumber(n);
         const dpi = Math.min(150, Math.max(20, Number(p.dpi) || 60));
         const img = await renderRect(n, [0, 0, pg.width, pg.height], dpi / 72);
-        return 'Saved: ' + (await writeShot('p' + String(n).padStart(3, '0') + '_' + dpi + 'dpi.png', img)) + '\n題: ' + (pg.title || '') + (pg.kinds && pg.kinds.length ? '（' + pg.kinds.join('・') + '）' : '');
+        const k = SM.round(72 / dpi, 4);
+        return 'Saved: ' + (await writeShot('p' + String(n).padStart(3, '0') + '_' + dpi + 'dpi.png', img)) + '\n題: ' + (pg.title || '') + (pg.kinds && pg.kinds.length ? '（' + pg.kinds.join('・') + '）' : '') + '\nページの大きさ: ' + n2(pg.width) + ' × ' + n2(pg.height) + ' pt（原点は左上。画像の 1 px = ' + k + ' pt。hiroi_annotate の bbox は 画像の px × ' + k + '）';
       },
       async hiroi_crop(p) {
         const a = (store.state.annotations || []).find((x) => x.id === p.annotation);
