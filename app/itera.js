@@ -117,7 +117,10 @@
             console.warn('[itera] model read failed', p, e);
           }
         }
-        const url = self.HIROI_MODEL_URL || ((self.location.ancestorOrigins && self.location.ancestorOrigins[0]) || '') + MODEL_WEB;
+        // ホストのオリジン: Chrome は ancestorOrigins、Firefox には無いので referrer（親の URL）から
+        let origin = (self.location.ancestorOrigins && self.location.ancestorOrigins[0]) || '';
+        if (!origin && self.document && self.document.referrer) { try { origin = new URL(self.document.referrer).origin; } catch (e) { /* 無ければ相対 */ } }
+        const url = self.HIROI_MODEL_URL || origin + MODEL_WEB;
         if (!M.net) throw new Error('モデルが VFS に無く、ホストから取る口も無い: ' + url);
         // ホストに落としてもらって VFS に置く（次からは VFS から。IPC に 3.7 MB を通さない）。download が無ければ fetch
         if (M.net.download) {
