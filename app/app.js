@@ -56,6 +56,7 @@
   }
 
   const ENV = self.MetaOS ? 'itera' : 'browser';
+  let bridge = null; // Itera の上でだけ（app/itera.js）。保存を VFS に、AI に道具を公開する
   const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/';
   const PDFJS_CMAPS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/cmaps/';
   const STORAGE_KEY = 'hiroi-tool:job5';
@@ -136,7 +137,8 @@
 
   async function boot() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
-    const saved = load();
+    if (ENV === 'itera' && self.SMIteraBridge) bridge = self.SMIteraBridge({ store, edit, app, toast, setScreen, setPage, attachPdf, confirmBox });
+    const saved = bridge ? await bridge.loadJob() : load();
     if (saved) store.replace(SMA.ensure(saved));
     store.onChange(onStoreChange);
     bindUI();
@@ -144,7 +146,7 @@
     let opened = false;
     if (store.state.doc && store.state.doc.pages) {
       try {
-        const rec = await IDB.get('pdf');
+        const rec = bridge ? await bridge.loadPdf() : await IDB.get('pdf');
         const d = store.state.doc;
         if (rec && (d.fingerprint ? rec.fingerprint === d.fingerprint : rec.pages === d.pages)) opened = await attachPdf(rec.bytes, rec.name, { quiet: true, stored: true });
       } catch (e) {
@@ -154,6 +156,7 @@
     recompute();
     renderAll();
     if (!opened && saved && store.state.pages.length) toast('前回の作業を開いた。図面の PDF をもう一度選んでください', 4000);
+    if (bridge) await bridge.afterBoot();
   }
 
   /*
@@ -234,7 +237,8 @@
     // PDF をブラウザに残すのは、画面を切り替えたあと（大きい PDF だと数秒かかり、その間 前の画面が見えていたため）
     if (!o.stored) {
       try {
-        await IDB.put('pdf', { name, fingerprint: fp, pages: n, bytes });
+        if (bridge) await bridge.savePdf({ name, fingerprint: fp, pages: n, bytes });
+        else await IDB.put('pdf', { name, fingerprint: fp, pages: n, bytes });
       } catch (e) {
         console.warn(e);
         toast('PDF をブラウザに残せなかった（次に開くとき、もう一度選んでください）', 4000);
@@ -265,6 +269,7 @@
     app.objects = SM.derive.allObjects(store, P());
   }
   function save() {
+    if (bridge) return bridge.saveJob();
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(store.state));
     } catch (e) {
@@ -3061,6 +3066,7 @@
   }
   async function resetAll() {
     if (!(await confirmBox('すべて消す', 'このブラウザに残っている作業・パレット・図面の PDF を消して、最初の画面に戻ります。書き出していない作業は戻せません。', 'すべて消す'))) return;
+    if (bridge) await bridge.reset();
     try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(OLD_KEY); } catch (e) { /* */ }
     try { await IDB.put('pdf', null); } catch (e) { /* */ }
     location.reload();
@@ -3155,7 +3161,7 @@
   const anScreen = self.SMAnalyzeScreen ? self.SMAnalyzeScreen({ el: $('#an'), store, P, h, $, edit, toast, openModal, confirmBox, app, IDB, ENV, setScreen, renderAll }) : null;
 
   // 外から覗く（試験・inject_js 用）
-  self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, anScreen: () => anScreen, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
+  self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, anScreen: () => anScreen, bridge: () => bridge, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
 
   boot();
 })();

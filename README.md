@@ -65,6 +65,10 @@
 
 「…」→「サンプルのパレットを読み込む」で、ある建物の電気設備図（照明器具・幹線・分岐回路）を手で起こしたパレットが入ります。図面そのものは公開していません。
 
+## Itera の上で
+
+[Itera](https://github.com/itomaAI/itera2-dev) のアプリとして開くと、保存は VFS に置かれ、Itera の AI に道具（`hiroi_status` / `hiroi_annotate` / `hiroi_crop` / `hiroi_apply` …）が公開されます。AI は注釈を 1 つ読んでは、その分だけパレットに書く、を繰り返せます。[docs/itera.md](docs/itera.md)
+
 ## 開発
 
 ```
@@ -80,7 +84,8 @@ open http://127.0.0.1:8792/app/index.html
 | `app/index.html`・`app/app.js`・`app/style.css` | 画面（拾い・集計） |
 | `app/palette.js`・`app/palette.css` | 画面（パレット） |
 | `app/analyze.js`・`app/analyze.css` | 画面（図面解析）と、Gemini への送り方 |
-| `tests/core.test.js`・`tests/analysis.test.js` | コアの試験（`node --test tests/core.test.js tests/analysis.test.js`） |
+| `app/itera.js` | Itera の上でだけ効く橋（保存を VFS に・AI への道具）。[docs/itera.md](docs/itera.md) |
+| `tests/core.test.js`・`tests/analysis.test.js`・`tests/itera.test.js` | コアと橋の試験（`node --test tests/core.test.js tests/analysis.test.js tests/itera.test.js`） |
 | `tests/ui/scroll.mjs` | 描き直しでスクロールの位置を失わないこと（白紙の PDF 40 ページ） |
 | `tests/ui/analyze.mjs` | 図面解析の画面の試験（白紙の PDF。Gemini には送らず、作り物の応答を返す差し替えの口で通す） |
 | `tests/ui/smoke.mjs` | 画面の試験（playwright。白紙の PDF を作って通す。`npm install` のあと `node tests/ui/smoke.mjs`） |
