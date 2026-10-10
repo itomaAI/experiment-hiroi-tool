@@ -338,7 +338,10 @@
     if (!Array.isArray(st.analysis.notes)) st.analysis.notes = [];
     if (!Array.isArray(st.analysis.runs)) st.analysis.runs = [];
     st.seq = st.seq || {};
-    for (const k of ['an', 'nt']) if (typeof st.seq[k] !== 'number') st.seq[k] = 0;
+    for (const k of ['an', 'nt', 'pr']) if (typeof st.seq[k] !== 'number') st.seq[k] = 0;
+    // GP の提案（T-0646）。提案は拾いではない（対象に数えない）。承認で箱になる。退けた場所は負例として残す
+    if (!Array.isArray(st.proposals)) st.proposals = [];
+    if (!Array.isArray(st.rejections)) st.rejections = [];
     if (st.palette) {
       if (!Array.isArray(st.palette.expected)) st.palette.expected = [];
       if (!Array.isArray(st.palette.systems)) st.palette.systems = [];
@@ -1062,10 +1065,54 @@
     }
 
     /* ---- 拾い ---- */
-    addBox(page, category, bbox) {
+    addBox(page, category, bbox, extra) {
       const id = this.nextId('pk');
-      this.state.pickups.push({ id, kind: 'box', page, category, chosen: null, bbox: bbox.map((v) => round(v, 1)) });
+      this.state.pickups.push(Object.assign({ id, kind: 'box', page, category, chosen: null, bbox: bbox.map((v) => round(v, 1)) }, extra || {}));
       return id;
+    }
+
+    /* ---- GP の提案（T-0646）。提案 { id, page, category, bbox, score, run }。退けた場所 { page, category, x, y } ---- */
+    proposal(id) {
+      return (this.state.proposals || []).find((p) => p.id === id) || null;
+    }
+    proposalsOn(page) {
+      return (this.state.proposals || []).filter((p) => p.page === page);
+    }
+    // そのカテゴリ（とページ）の前の提案を消して、新しい提案を入れる
+    replaceProposals(category, page, list, run) {
+      M.fill5(this.state);
+      this.state.proposals = this.state.proposals.filter((p) => !(p.category === category && (page === null || p.page === page)));
+      const ids = [];
+      for (const it of list) {
+        const id = this.nextId('pr');
+        this.state.proposals.push({ id, page, category, bbox: it.bbox.map((v) => round(v, 1)), score: it.score, run: run || null });
+        ids.push(id);
+      }
+      return ids;
+    }
+    clearProposals(category) {
+      M.fill5(this.state);
+      this.state.proposals = category ? this.state.proposals.filter((p) => p.category !== category) : [];
+    }
+    // 承認: 提案を箱にする（出どころ by: 'gp'）。戻り: 箱の id
+    approveProposal(id) {
+      const p = this.proposal(id);
+      if (!p) return null;
+      this.state.proposals = this.state.proposals.filter((x) => x.id !== id);
+      return this.addBox(p.page, p.category, p.bbox, { by: 'gp', score: p.score });
+    }
+    // 退ける: 提案を消し、その場所を負例として残す
+    rejectProposal(id) {
+      const p = this.proposal(id);
+      if (!p) return false;
+      M.fill5(this.state);
+      this.state.proposals = this.state.proposals.filter((x) => x.id !== id);
+      this.state.rejections.push({ page: p.page, category: p.category, x: round(p.bbox[0] + p.bbox[2] / 2, 1), y: round(p.bbox[1] + p.bbox[3] / 2, 1) });
+      return true;
+    }
+    removeRejections(page, category) {
+      M.fill5(this.state);
+      this.state.rejections = this.state.rejections.filter((r) => !((page === null || r.page === page) && (category === null || r.category === category)));
     }
     addLine(page, category, nodes, path, name) {
       const id = this.nextId('pk');
