@@ -21,12 +21,14 @@
 
 詳しくは [docs/concepts.md](docs/concepts.md)。
 
+箱を 1 つ置くと、同じ記号の場所を GP（ガウス過程）が探して **提案**（点線の箱）にします。承認で拾いになり、退けると負例になります。[docs/gp.md](docs/gp.md)
+
 ## 画面
 
 タブは 4 つです。
 
 - **図面解析** — 図面を開いて最初に触るタブ。ページごとに「送る」（解析に使う）と「拾う」（拾いのタブに出す）の印を付け、仕様書・凡例・機器表・配線表などの読みどころを囲み、Gemini に 1 回で読ませて、ページの分類とパレット（部材の木・ラベル・規則・構成・見込み・系統）と覚え書きを下書きさせます。結果はどれも人が直せます。詳しくは [docs/analysis.md](docs/analysis.md)
-- **拾い** — 左にページ（縮小画像。図面解析で「拾う」にしたページだけ）、真ん中に図面、右に「置くカテゴリ」の木と、選んだものの詳細。「参照 ▾」で、図面解析で囲んだ範囲（器具表など）を小窓に出せます
+- **拾い** — 左にページ（縮小画像。図面解析で「拾う」にしたページだけ）、真ん中に図面、右に「置くカテゴリ」の木と、「提案（GP）」（特徴量を用意する・探す・閾値・まとめて承認）と、選んだものの詳細。「参照 ▾」で、図面解析で囲んだ範囲（器具表など）を小窓に出せます
 - **集計** — 集計表（行・列に 部材／系統／平立／ラベルの木 を選ぶ。CSV で書き出せる）・対象の一覧・照合（パレットの見込みと、置いた数）
 - **パレット** — 型の編集
   - **部材カテゴリ**: 拾うものの木。名前をその場で書くアウトライナー（Enter で兄弟・Tab で子・Shift+Tab で戻す・Alt+↑↓ で並べ替え・行頭の ⋮⋮ を引いて動かす）。右で 数え方（個数／長さ）と 構成（1 つの拾いを部材の組に展開する。例: 幹線 1A2 → CVT 100 × 1 ＋ IV 14 × 2）
@@ -48,7 +50,7 @@
 | 道具 | キー | |
 | :-- | :-- | :-- |
 | 選ぶ | V | 押して選ぶ。同じ場所をもう一度押すと 1 つ下のもの。右ボタンで「ここにあるもの」の一覧（エリアの辺の上なら「ここにエリアの角を足す」、角の上なら「この角を消す」）。空いた所を引くと範囲選択、Delete で消す。ノードを足すのは右クリックだけ（線分の上で「ここにノードを足す」）。ノード・箱・角を引いて動かす（ノードは線やルートの下でも掴める）。エリア・線・ルート・線分は選んでから引くと動く（線・ルートは骨ごと動くので、同じ骨を共有するものもいっしょに動く）。エリアの角・線分の途中の角を引くと形が変わる |
-| 箱 | B | 引いて囲う。押すだけなら直前と同じ大きさ |
+| 箱 | B | 引いて囲う。押すだけなら直前と同じ大きさ。置くと同じ記号の提案が出る（特徴量があるページ。提案は Enter で承認・Delete で退ける） |
 | 線 | W | 押して骨をたどる（既存のノードに吸着。線分の途中から分けるなら、線分の上で右クリックしてノードを足す）。±10° で水平・垂直に揃う（Alt で自由）。Shift で曲がり角、↑↓ で立（縦）の印、Enter で置く |
 | エリア | R / P | 矩形 ／ 多角形。囲むと意味を選ぶ画面 |
 | ルート | L | 線と同じ操作でなぞる。終えると意味（ラベル）と長さ（平・立）を選ぶ画面。モーダルで選んだラベルは、もう一度押すか「ラベルなし（長さだけ）」で外せる。ラベルと長さは別の層（ラベルルート・長さルート）になる。長さはあとからでも置ける（ラベルルートを選んで「＋ 同じ線分に長さルートを置く」、または線分を選んで「この線分の長さ」） |
@@ -67,7 +69,7 @@
 
 ## Itera の上で
 
-[Itera](https://github.com/itomaAI/itera2-dev) のアプリとして開くと、保存は VFS に置かれ、Itera の AI に道具（`hiroi_status` / `hiroi_annotate` / `hiroi_crop` / `hiroi_apply` …）が公開されます。AI は注釈を 1 つ読んでは、その分だけパレットに書く、を繰り返せます。[docs/itera.md](docs/itera.md)
+[Itera](https://github.com/itomaAI/itera2-dev) のアプリとして開くと、保存は VFS に置かれ、Itera の AI に道具（`hiroi_status` / `hiroi_annotate` / `hiroi_crop` / `hiroi_apply` / `hiroi_detect` …）が公開されます。AI は注釈を 1 つ読んでは、その分だけパレットに書く、を繰り返せます。[docs/itera.md](docs/itera.md)
 
 ## 開発
 
@@ -80,15 +82,18 @@ open http://127.0.0.1:8792/app/index.html
 | :-- | :-- |
 | `core/model.js` | 画面を持たない部分（パレット・幾何・ストア（元に戻す・下見）・演算・集計）。node でも動く |
 | `core/analysis.js` | 図面解析の画面を持たない部分（注釈・ページの欄・送るものの計画・頼む文と応答の形・応答をパレットへ）。node でも動く |
+| `core/gp.js` | GP の提案の画面を持たない部分（特徴量・GP の当てはめと点数・提案の抽出・手本と負例の収集）。node でも動く。[docs/gp.md](docs/gp.md) |
 | `fixtures/palette.js` | サンプルのパレットと見本 |
 | `app/index.html`・`app/app.js`・`app/style.css` | 画面（拾い・集計） |
 | `app/palette.js`・`app/palette.css` | 画面（パレット） |
 | `app/analyze.js`・`app/analyze.css` | 画面（図面解析）と、Gemini への送り方 |
 | `app/itera.js` | Itera の上でだけ効く橋（保存を VFS に・AI への道具）。[docs/itera.md](docs/itera.md) |
-| `tests/core.test.js`・`tests/analysis.test.js`・`tests/itera.test.js` | コアと橋の試験（`node --test tests/core.test.js tests/analysis.test.js tests/itera.test.js`） |
+| `app/detector.js`・`app/detector_worker.js` | 口「検出」: ページの特徴量を ONNX（`data/gp_features_v1.onnx`）で計算する Worker と、IndexedDB への保存 |
+| `tests/core.test.js`・`tests/analysis.test.js`・`tests/itera.test.js`・`tests/gp.test.js` | コアと橋の試験（`npm test` = `node --test tests/*.test.js`） |
+| `tests/ui/gp.mjs` | GP の提案の画面の試験（白紙の PDF に作り物の特徴量を IndexedDB に入れて通す。ONNX は要らない） |
 | `tests/ui/scroll.mjs` | 描き直しでスクロールの位置を失わないこと（白紙の PDF 40 ページ） |
 | `tests/ui/analyze.mjs` | 図面解析の画面の試験（白紙の PDF。Gemini には送らず、作り物の応答を返す差し替えの口で通す） |
 | `tests/ui/smoke.mjs` | 画面の試験（playwright。白紙の PDF を作って通す。`npm install` のあと `node tests/ui/smoke.mjs`） |
 | `tests/ui/sample.mjs` | サンプル図面での試験（PDF は公開していないので、`data/sample.pdf` が在るときだけ走る） |
 
-PDF の描画には [pdf.js](https://mozilla.github.io/pdf.js/) 2.16 を、図面解析で PDF のページを切り出すのには [pdf-lib](https://pdf-lib.js.org/) 1.17 を、CDN から読みます。
+PDF の描画には [pdf.js](https://mozilla.github.io/pdf.js/) 2.16 を、図面解析で PDF のページを切り出すのには [pdf-lib](https://pdf-lib.js.org/) 1.17 を、GP の特徴量の計算には [onnxruntime-web](https://onnxruntime.ai/) 1.22 を、CDN から読みます。特徴抽出器の ONNX（3.7 MB）は `data/gp_features_v1.onnx` に置きます（このリポジトリには入っていません）。

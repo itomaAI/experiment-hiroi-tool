@@ -66,6 +66,7 @@
   const P = () => store.palette;
 
   const app = {
+    gp: { threshold: 0.5, auto: true }, // GP の提案（T-0646）: 見せる閾値・箱を置いたら自動で探す
     pageId: null,
     view: { scale: 1, tx: 0, ty: 0 },
     views: new Map(),
@@ -137,7 +138,7 @@
 
   async function boot() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
-    if (ENV === 'itera' && self.SMIteraBridge) bridge = self.SMIteraBridge({ store, edit, app, toast, setScreen, setPage, attachPdf, confirmBox });
+    if (ENV === 'itera' && self.SMIteraBridge) bridge = self.SMIteraBridge({ store, edit, app, toast, setScreen, setPage, attachPdf, confirmBox, P, renderAll: () => renderAll(), gp: { detector: () => detector, search: (c, pg, o) => gpSearch(c, pg, o), approveAll: (pg, c) => gpApproveAll(pg, c), rejectAll: (pg, c) => gpRejectAll(pg, c), approve: (id) => gpApprove(id), reject: (id) => gpReject(id) } });
     const saved = bridge ? await bridge.loadJob() : load();
     if (saved) store.replace(SMA.ensure(saved));
     store.onChange(onStoreChange);
@@ -766,6 +767,24 @@
 
     // 拾い
     if (lay.pickup) {
+      // GP の提案（T-0646）: 点線の箱と点数。承認で拾いになる
+      for (const pr of store.proposalsOn(pg.id)) {
+        if (pr.score < app.gp.threshold) continue;
+        const sel = isSel('proposal', pr.id);
+        const color = catColor(pr.category);
+        const [sx, sy] = toScreen(pr.bbox[0], pr.bbox[1]);
+        const w = pr.bbox[2] * app.view.scale;
+        const hh = pr.bbox[3] * app.view.scale;
+        g.save();
+        g.setLineDash([5, 4]);
+        g.lineWidth = sel ? 2.5 : 1.5;
+        g.strokeStyle = sel ? COLORS.select : color;
+        g.fillStyle = alpha(color, sel ? 0.18 : 0.06);
+        g.fillRect(sx, sy, w, hh);
+        g.strokeRect(sx, sy, w, hh);
+        g.restore();
+        if (app.view.scale > 1.2 || sel) tag(g, Math.round(pr.score * 100) + '%', sx, sy - 2, color, { above: true, bold: sel });
+      }
       for (const p of store.pickupsOn(pg.id)) {
         const objs = app.objects.filter((o) => o.pickup === p.id);
         const first = objs[0];
@@ -868,6 +887,11 @@
       near.sort((a, b) => a.d - b.d);
     }
     if (lay.pickup) {
+      for (const pr of store.proposalsOn(pg.id)) {
+        if (pr.score < app.gp.threshold) continue;
+        const t = tol(PX.box);
+        if (x >= pr.bbox[0] - t && x <= pr.bbox[0] + pr.bbox[2] + t && y >= pr.bbox[1] - t && y <= pr.bbox[1] + pr.bbox[3] + t) out.push({ kind: 'proposal', id: pr.id, how: 'proposal' });
+      }
       const ps = store.pickupsOn(pg.id);
       for (let i = ps.length - 1; i >= 0; i--) {
         const p = ps[i];
@@ -1318,7 +1342,8 @@
           setTimeout(() => { window.addEventListener('pointerdown', close, true); window.addEventListener('keydown', esc, true); }, 0);
         },
         onKey(e) {
-          if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection();
+          // preventDefault を立てて、下の共通の onKey で二度目の deleteSelection が走らないようにする（提案を退けると次の提案が選ばれるので、二度走ると 2 つ退けてしまう。T-0646）
+          if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
         },
         cancel() {
           grab.cancel();
@@ -1342,6 +1367,7 @@
         lastBox = { w: bbox[2], h: bbox[3] };
         api.select({ kind: 'pickup', id });
         showChips(id);
+        if (app.gp.auto) gpAfterBox(id);
         return id;
       }
       return {
@@ -1863,6 +1889,7 @@
       if (e.defaultPrevented) return;
     }
     if (e.key === 'Delete' || e.key === 'Backspace') return deleteSelection();
+    if (e.key === 'Enter' && app.selection && app.selection.kind === 'proposal') { e.preventDefault(); return gpApprove(app.selection.id); }
     const k = e.key.toLowerCase();
     if (k === '0') return fit();
     for (const t of TOOLS) if (t.key.toLowerCase() === k && !e.ctrlKey && !e.metaKey) return setTool(t.id);
@@ -1889,6 +1916,7 @@
       return;
     }
     if (sel.kind === 'area') edit('エリアを消す', (S) => S.removeArea(sel.id));
+    else if (sel.kind === 'proposal') return gpReject(sel.id);
     else if (sel.kind === 'pickup') edit('拾いを消す', (S) => S.removePickup(sel.id));
     else if (sel.kind === 'route') {
       const r = store.route(sel.id);
@@ -2366,7 +2394,7 @@
     const sc = $('#right');
     const sy = sc.scrollTop;
     el.innerHTML = '';
-    el.append(secPageNotes() || '', secCategoryTree(), secDetail());
+    el.append(secPageNotes() || '', secCategoryTree(), secProposals() || '', secDetail());
     sc.scrollTop = sy;
   }
   // このページの要約と覚え書き（図面解析で入れたもの。済んでいないもの）
@@ -2429,6 +2457,7 @@
       const nm = { pickup: '拾い', route: 'ルート', area: 'エリア', segment: '線分', node: 'ノード' };
       return h('div', { class: 'sec' }, h('h3', {}, '範囲で選んだもの'), h('div', { class: 'detail' }, h('div', {}, Object.entries(by).map(([k, n]) => h('span', { class: 'lchip', style: 'background:' + (k === 'pickup' ? 'var(--pickup)' : k === 'route' || k === 'area' ? 'var(--layer)' : '#64748b') }, nm[k] + ' ' + n))), h('div', { class: 'muted', style: 'margin:6px 0' }, '線分とノードは、通る線や線分が残っていれば消えない。ルートを消しても骨は残る'), h('div', { class: 'acts' }, h('button', { class: 'danger', onclick: deleteSelection }, 'まとめて消す（' + sel.items.length + '）'), h('button', { onclick: () => { app.selection = null; renderAll(); } }, '選択を外す'))));
     }
+    if (sel.kind === 'proposal') return detailProposal(pal, store.proposal(sel.id));
     if (sel.kind === 'pickup') return detailPickup(pal, store.pickup(sel.id));
     if (sel.kind === 'area') return detailArea(pal, store.area(sel.id));
     if (sel.kind === 'route') return detailRoute(pal, store.route(sel.id));
@@ -3134,6 +3163,108 @@
     resize();
   }
 
+  /* ======================================================================
+   * GP の提案（T-0646）。口「検出」は app/detector.js、計算は core/gp.js
+   * ====================================================================== */
+  const detector = self.SMDetector && self.SMGP ? self.SMDetector({ store, P, app, IDB, toast, modelUrl: self.HIROI_MODEL_URL, loadModel: () => (bridge && bridge.loadModel ? bridge.loadModel() : null) }) : null; // bridge は起動のあとに入るので、呼ぶときに見る
+  if (detector) detector.onChange(() => renderPanel());
+  const gpNextId = () => { const pg = page(); if (!pg) return null; const list = store.proposalsOn(pg.id).filter((p) => p.score >= app.gp.threshold).sort((a, b) => b.score - a.score); return list.length ? list[0].id : null; };
+  function gpSelectNext() {
+    const id = gpNextId();
+    app.selection = id ? { kind: 'proposal', id } : null;
+    if (id) showPlace(store.proposal(id));
+    renderAll();
+  }
+  function gpApprove(id) {
+    const pr = store.proposal(id);
+    if (!pr) return;
+    const boxId = edit('提案を承認', (S) => S.approveProposal(id));
+    if (boxId) gpSelectNext();
+  }
+  function gpReject(id) {
+    if (!store.proposal(id)) return;
+    edit('提案を退ける', (S) => S.rejectProposal(id));
+    gpSelectNext();
+  }
+  function gpApproveAll(pageId, category) {
+    const list = store.proposalsOn(pageId).filter((p) => p.score >= app.gp.threshold && (!category || p.category === category));
+    if (!list.length) return;
+    edit('提案をまとめて承認（' + list.length + '）', (S) => { for (const p of list) S.approveProposal(p.id); });
+    app.selection = null;
+    renderAll();
+  }
+  function gpRejectAll(pageId, category) {
+    const list = store.proposalsOn(pageId).filter((p) => !category || p.category === category);
+    if (!list.length) return;
+    edit('提案を全部退ける（' + list.length + '）', (S) => { for (const p of list) S.rejectProposal(p.id); });
+    app.selection = null;
+    renderAll();
+  }
+  // 手本からこのページの提案を作って入れ替える。戻り: 提案の数（-1 は手本が無い）
+  function gpSearch(category, pageId, opts) {
+    if (!detector) return -1;
+    const o = opts || {};
+    const r = detector.propose(category, [pageId], { threshold: 0.3, max: 300 });
+    if (!r.model) { if (!o.quiet) toast('手本が無い: このカテゴリの箱を、特徴量のあるページに 1 つ置く', 3000); return -1; }
+    const list = r.byPage.get(pageId) || [];
+    edit('提案を更新', (S) => S.replaceProposals(category, pageId, list, new Date().toISOString()));
+    if (!o.quiet) toast('提案 ' + list.filter((p) => p.score >= app.gp.threshold).length + '（手本 ' + r.collect.exemplars.length + '・負例 ' + (r.model.negatives) + '）', 2500);
+    return list.length;
+  }
+  async function gpAfterBox(boxId) {
+    if (!detector) return;
+    const p = store.pickup(boxId);
+    if (!p || p.category === 'cat-root') return;
+    const st = detector.status(p.page);
+    if (st.status !== 'ready') return; // 特徴量が無ければ、右の板で用意してもらう
+    gpSearch(p.category, p.page, { quiet: true });
+    renderAll();
+  }
+  async function gpPrepare(pageId) {
+    if (!detector) return;
+    try {
+      await detector.ensurePage(pageId);
+      toast('特徴量を用意した（' + ((detector.envText && detector.envText()) || detector.ep || '保存から') + '）', 2500);
+    } catch (e) {
+      toast('特徴量を用意できなかった: ' + e.message, 6000);
+    }
+    renderAll();
+  }
+  function secProposals() {
+    if (!detector) return null;
+    const pg = page();
+    if (!pg) return null;
+    const pal = P();
+    const st = detector.status(pg.id);
+    const cat = app.currentCategory;
+    const catName = cat === 'cat-root' ? null : (pal.category(cat) || {}).name;
+    const here = store.proposalsOn(pg.id);
+    const shown = here.filter((p) => p.score >= app.gp.threshold);
+    const exemplars = cat !== 'cat-root' ? store.state.pickups.filter((p) => p.kind === 'box' && (p.category === cat || pal.categoryAncestors(p.category).includes(cat))).length : 0;
+    const box = h('details', { class: 'sec gp', open: here.length || st.status === 'working' ? '' : null }, h('summary', {}, h('b', {}, '提案（GP）'), shown.length ? h('span', { class: 'dim' }, '　' + shown.length) : null));
+    const line = (t) => h('div', { class: 'muted', style: 'margin:4px 0' }, t);
+    if (st.status === 'none') box.append(line('このページの特徴量はまだ無い。'), h('div', { class: 'acts' }, h('button', { onclick: () => gpPrepare(pg.id) }, '特徴量を用意する（数秒〜数十秒）')));
+    else if (st.status === 'working') box.append(line('計算中… ' + st.done + ' / ' + (st.total || '?') + ' タイル'));
+    else if (st.status === 'error') box.append(line('できなかった: ' + st.error), h('div', { class: 'acts' }, h('button', { onclick: () => gpPrepare(pg.id) }, 'もう一度')));
+    else {
+      box.append(line('特徴量あり（' + (st.ms ? Math.round(st.ms / 100) / 10 + ' 秒' + (detector.envText && detector.envText() ? '・' + detector.envText() : '') : '保存から') + '）。' + (catName ? '「' + catName + '」の手本 ' + exemplars : '右の木でカテゴリを選ぶ')));
+      box.append(h('div', { class: 'acts' }, h('button', { class: 'primary', disabled: cat === 'cat-root' || !exemplars ? '' : null, onclick: () => { gpSearch(cat, pg.id); renderAll(); } }, '探す'), h('label', { class: 'muted' }, '閾値 ', h('input', { type: 'range', min: 0.3, max: 0.95, step: 0.05, value: app.gp.threshold, style: 'width:90px;vertical-align:middle', oninput: (e) => { app.gp.threshold = Number(e.target.value); renderAll(); } }), ' ' + Math.round(app.gp.threshold * 100) + '%'), h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: app.gp.auto ? '' : null, onchange: (e) => { app.gp.auto = e.target.checked; } }), ' 箱を置いたら探す')));
+    }
+    if (here.length) {
+      const byCat = {};
+      for (const p of shown) byCat[p.category] = (byCat[p.category] || 0) + 1;
+      box.append(h('div', { style: 'margin:6px 0' }, Object.entries(byCat).map(([c, n]) => h('span', { class: 'lchip', style: 'background:' + catColor(c) }, ((pal.category(c) || {}).name || c) + ' ' + n))));
+      box.append(h('div', { class: 'acts' }, h('button', { class: 'primary', onclick: () => gpApproveAll(pg.id, null) }, '見えている提案を承認（' + shown.length + '）'), h('button', { onclick: gpSelectNext }, '次の提案へ'), h('button', { class: 'danger', onclick: () => gpRejectAll(pg.id, null) }, '全部退ける')));
+      box.append(line('提案を押して Enter で承認・Delete で退ける。退けた場所は次から負例になる'));
+    }
+    return box;
+  }
+  function detailProposal(pal, pr) {
+    if (!pr) return h('div', { class: 'sec' }, h('h3', {}, '提案'), h('div', { class: 'empty' }, '無い'));
+    const c = pal.category(pr.category);
+    return h('div', { class: 'sec' }, h('h3', {}, '提案（GP）'), h('div', { class: 'detail' }, h('div', {}, h('span', { class: 'lchip', style: 'background:' + catColor(pr.category) }, c ? c.name : pr.category), ' ' + Math.round(pr.score * 100) + '%'), h('div', { class: 'muted', style: 'margin:6px 0' }, '承認すると、このカテゴリの箱になる（出どころ GP）。退けると、この場所は負例として残る'), h('div', { class: 'acts' }, h('button', { class: 'primary', onclick: () => gpApprove(pr.id) }, '承認（Enter）'), h('button', { class: 'danger', onclick: () => gpReject(pr.id) }, '退ける（Delete）'), h('button', { onclick: gpSelectNext }, '次へ'))));
+  }
+
   /* ---- パレットの画面（app/palette.js）へ渡すもの ---- */
   const palScreen = self.SMPaletteScreen
     ? self.SMPaletteScreen({
@@ -3161,7 +3292,7 @@
   const anScreen = self.SMAnalyzeScreen ? self.SMAnalyzeScreen({ el: $('#an'), store, P, h, $, edit, toast, openModal, confirmBox, app, IDB, ENV, setScreen, renderAll }) : null;
 
   // 外から覗く（試験・inject_js 用）
-  self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, anScreen: () => anScreen, bridge: () => bridge, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
+  self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, anScreen: () => anScreen, bridge: () => bridge, detector: () => detector, gp: { search: gpSearch, approve: gpApprove, reject: gpReject, approveAll: gpApproveAll, prepare: gpPrepare }, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
 
   boot();
 })();
