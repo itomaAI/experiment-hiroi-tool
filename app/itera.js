@@ -1,0 +1,431 @@
+/*
+ * 拾いツール — Itera の上で動くときだけ効く橋（T-0643）。
+ *
+ *   保存   作業（ストアの状態）と図面の PDF を、ブラウザの localStorage／IndexedDB ではなく Itera の VFS に置く
+ *          （data/apps/hiroi-tool/current/{job.json, source.pdf, source.json}）。Itera の AI も同じファイルを読める
+ *   道具   Itera の AI（エンジン）に道具を公開する（MetaOS.tools.register）:
+ *            hiroi_status   図面・ページ・注釈・パレットの要約
+ *            hiroi_page     ページの縮小画像を VFS に書き、そのパスを返す（AI は read_file で見る）
+ *            hiroi_crop     注釈の切り抜き画像（300 dpi。大きければタイル）を VFS に書いて返す
+ *            hiroi_palette  パレットの中身（id 付き）を読む
+ *            hiroi_apply    編集の塊を入れる（図面解析の応答と同じ形。core/analysis.js の apply。履歴 1 行 → 元に戻せる）
+ *            hiroi_undo     最後の編集を元に戻す
+ *            hiroi_open     VFS の PDF を開く
+ *            hiroi_show     画面（タブ・ページ）を切り替える
+ *          AI が書いたものは、図面解析と同じく by: 'llm' を持ち、人が画面で直せる。
+ *   起動   spawn の引数 file=<VFS の PDF> があれば、その図面を開く
+ *
+ * 単体（GitHub Pages）では self.MetaOS が無いので、何もしない。
+ * 画面（app.js）とは ctx だけでつながる。編集は ctx.edit（ストアの 1 回の編集）を通す。
+ */
+(function () {
+  'use strict';
+
+  const BASE = 'data/apps/hiroi-tool/current';
+  const JOB = BASE + '/job.json';
+  const PDF = BASE + '/source.pdf';
+  const PDF_META = BASE + '/source.json';
+  const SHOTS = BASE + '/shots';
+
+  self.SMIteraBridge = function (ctx) {
+    const M = self.MetaOS;
+    if (!M) return null;
+    const { store, edit, app, toast, setScreen, setPage, attachPdf } = ctx;
+    const A = self.SMA;
+    const SM = self.SM;
+
+    /* ======================================================================
+     * 保存（VFS）
+     * ====================================================================== */
+    let dirReady = null;
+    async function ensureDirs() {
+      if (dirReady) return dirReady;
+      dirReady = (async () => {
+        for (const d of [BASE, SHOTS]) {
+          try {
+            if (!(await M.fs.exists(d))) await M.fs.mkdir(d);
+          } catch (e) {
+            /* 既にある・作れない: 書くときに分かる */
+          }
+        }
+      })();
+      return dirReady;
+    }
+    async function writeText(path, text) {
+      await ensureDirs();
+      await M.fs.write(path, text, { overwrite: true });
+    }
+    async function writeBinary(path, data) {
+      await ensureDirs();
+      await M.fs.write(path, data, { overwrite: true });
+    }
+    async function readJson(path) {
+      try {
+        if (!(await M.fs.exists(path))) return null;
+        return JSON.parse(await M.fs.read(path));
+      } catch (e) {
+        console.warn('[itera] read failed', path, e);
+        return null;
+      }
+    }
+
+    let saveTimer = null;
+    let saving = Promise.resolve();
+    function saveJob() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        const text = JSON.stringify(store.state);
+        saving = saving.then(() => writeText(JOB, text)).catch((e) => console.warn('[itera] save failed', e));
+      }, 600);
+    }
+    async function flush() {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      await writeText(JOB, JSON.stringify(store.state));
+    }
+    async function loadJob() {
+      const st = await readJson(JOB);
+      return st ? SM.migrate(st) : null;
+    }
+    async function savePdf(rec) {
+      try {
+        await writeBinary(PDF, new Uint8Array(rec.bytes.slice(0)));
+        await writeText(PDF_META, JSON.stringify({ name: rec.name, fingerprint: rec.fingerprint, pages: rec.pages }));
+      } catch (e) {
+        console.warn(e);
+        toast('PDF を VFS に残せなかった（次に開くとき、もう一度選んでください）', 4000);
+      }
+    }
+    async function loadPdf() {
+      const meta = await readJson(PDF_META);
+      if (!meta) return null;
+      try {
+        if (!(await M.fs.exists(PDF))) return null;
+        const bytes = await M.fs.read(PDF, { encoding: 'binary' });
+        return { name: meta.name, fingerprint: meta.fingerprint, pages: meta.pages, bytes: bytes.buffer ? bytes.buffer : bytes };
+      } catch (e) {
+        console.warn('[itera] pdf read failed', e);
+        return null;
+      }
+    }
+    async function reset() {
+      for (const f of [JOB, PDF, PDF_META]) {
+        try {
+          if (await M.fs.exists(f)) await M.fs.delete(f);
+        } catch (e) {
+          console.warn('[itera] delete failed', f, e);
+        }
+      }
+    }
+    async function openVfsPdf(path) {
+      const bytes = await M.fs.read(path, { encoding: 'binary' });
+      const name = path.split('/').pop();
+      return attachPdf(bytes.buffer ? bytes.buffer : bytes, name);
+    }
+
+    /* ======================================================================
+     * 画像（ページ・切り抜き）
+     * ====================================================================== */
+    function pageByNumber(n) {
+      const p = store.state.pages.find((x) => x.index === n);
+      if (!p) throw new Error('p.' + n + ' は無い（ページは 1〜' + store.state.pages.length + '）');
+      return p;
+    }
+    async function renderRect(index, rect, scale) {
+      const ppg = app.pdfPages && app.pdfPages.get(index);
+      if (!ppg) throw new Error('p.' + index + ' を描けない（PDF が開いていない）');
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(rect[2] * scale));
+      c.height = Math.max(1, Math.round(rect[3] * scale));
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, c.width, c.height);
+      await ppg.render({ canvasContext: g, viewport: ppg.getViewport({ scale }), transform: [1, 0, 0, 1, -rect[0] * scale, -rect[1] * scale] }).promise;
+      const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+      return { blob, w: c.width, h: c.height };
+    }
+    async function writeShot(name, img) {
+      const path = SHOTS + '/' + name;
+      await writeBinary(path, img.blob);
+      return path + ' (' + img.w + '×' + img.h + ', ' + Math.round(img.blob.size / 1024) + ' KB)';
+    }
+
+    /* ======================================================================
+     * 文字にする（AI へ返すもの）
+     * ====================================================================== */
+    const n2 = (x) => (x === null || x === undefined ? '' : Math.round(x * 10) / 10);
+    function statusText() {
+      const st = store.state;
+      const d = st.doc || {};
+      const lines = [];
+      lines.push('図面: ' + (d.name ? d.name + '（' + d.pages + ' ページ' + (d.sample ? '・サンプル図面' : '') + '）' : '（開いていない）'));
+      const pick = st.pages.filter((p) => p.pick === true).length;
+      const send = st.pages.filter((p) => p.send === true).length;
+      const tagged = st.pages.filter((p) => p.title && !/^p\.\d+$/.test(p.title)).length;
+      lines.push('ページ: ' + st.pages.length + '（拾う ' + pick + '・送る ' + send + '・題あり ' + tagged + '）');
+      const anns = (st.annotations || []).map((a) => {
+        const pg = st.pages.find((p) => p.id === a.page);
+        return '  ' + a.id + ' p.' + (pg ? pg.index : '?') + ' [' + A.kind(a.kind).name + '] ' + (a.title || '') + (a.allPages ? '（全ページ）' : '') + (a.note ? ' — ' + a.note : '');
+      });
+      lines.push('注釈: ' + anns.length + (anns.length ? '\n' + anns.join('\n') : ''));
+      const pal = st.palette;
+      lines.push('パレット: カテゴリ ' + pal.categories.length + '・ラベル ' + pal.labels.length + '・規則 ' + pal.labels.reduce((s, l) => s + ((l.rules && l.rules.length) || 0), 0) + '・見込み ' + ((pal.expected && pal.expected.length) || 0) + '・系統 ' + ((pal.systems && pal.systems.length) || 0));
+      lines.push('図面の上: エリア ' + st.areas.length + '・ルート ' + st.routes.length + '・拾い ' + st.pickups.length);
+      const notes = (st.analysis && st.analysis.notes) || [];
+      lines.push('覚え書き: ' + notes.length + '・元に戻せる編集 ' + store.undoStack.length);
+      if (st.analysis && st.analysis.focus) lines.push('今回の範囲: ' + st.analysis.focus);
+      const digest = A.paletteDigest(pal, 80);
+      if (digest) lines.push('', digest);
+      return lines.join('\n');
+    }
+    function paletteText(part, q) {
+      const st = store.state;
+      const pal = st.palette;
+      const needle = (q || '').trim().toLowerCase();
+      const has = (s) => !needle || String(s || '').toLowerCase().includes(needle);
+      const parts = part ? part.split(',').map((s) => s.trim()) : ['categories', 'labels', 'rules', 'expected', 'systems', 'notes'];
+      const out = [];
+      const nameOf = (list, id) => {
+        const x = list.find((e) => e.id === id);
+        return x ? x.name : id;
+      };
+      if (parts.includes('categories')) {
+        out.push('## カテゴリ（id | 名前 | 親 | 数え方 | 構成）');
+        for (const c of pal.categories) {
+          if (!has(c.name) && !has(c.id)) continue;
+          const comps = (c.components || []).map((k) => nameOf(pal.categories, k.material) + '×' + k.count + (k.add ? '+余長' : '') + (k.when && k.when.length ? '(' + k.when.map((w) => nameOf(pal.labels, w)).join('/') + ')' : '')).join(', ');
+          out.push([c.id, c.name, c.parent ? nameOf(pal.categories, c.parent) : '(根)', c.size || '', comps].join(' | ') + (c.by === 'llm' ? ' [llm]' : ''));
+        }
+      }
+      if (parts.includes('labels') || parts.includes('rules')) {
+        out.push('## ラベル（id | 名前 | 親 | 規則: カテゴリ → 候補）');
+        for (const l of pal.labels) {
+          const rules = (l.rules || []).map((r) => nameOf(pal.categories, r.category) + ' → ' + (r.candidates || []).map((k) => nameOf(pal.categories, k)).join('/')).join('; ');
+          if (parts.includes('rules') && !parts.includes('labels') && !rules) continue;
+          if (!has(l.name) && !has(l.id) && !has(rules)) continue;
+          out.push([l.id, (l.root ? '# ' : '') + l.name, l.parent ? nameOf(pal.labels, l.parent) : '(木)', rules].join(' | ') + (l.by === 'llm' ? ' [llm]' : ''));
+        }
+      }
+      if (parts.includes('expected')) {
+        out.push('## 見込み（ラベル | カテゴリ | 個数）');
+        for (const e of pal.expected || []) out.push([(e.labels || []).map((k) => nameOf(pal.labels, k)).join('/'), nameOf(pal.categories, e.category), e.count].join(' | '));
+      }
+      if (parts.includes('systems')) {
+        out.push('## 系統（名前 | 起点 | 終点 | カテゴリ | 配線）');
+        for (const s of pal.systems || []) if (has(s.name) || has(s.text)) out.push([s.name, s.from, s.to, s.category ? nameOf(pal.categories, s.category) : '', s.text].join(' | '));
+      }
+      if (parts.includes('notes')) {
+        out.push('## 覚え書き（id | 種類 | 文 | ページ）');
+        for (const nt of (st.analysis && st.analysis.notes) || []) if (has(nt.text)) out.push([nt.id, nt.kind, nt.text, (nt.pages || []).join(',')].join(' | '));
+      }
+      return out.join('\n');
+    }
+
+    /* ======================================================================
+     * 道具
+     * ====================================================================== */
+    const DEFS = {
+      hiroi_status: `<define_tag name="hiroi_status">
+拾いツール（積算支援）の今を返す: 開いている図面・ページの数（拾う／送る）・注釈の一覧（id・ページ・種類・題）・パレットの要約（カテゴリとラベルの木）・図面の上の層と拾いの数。
+Attributes: なし
+Note: まずこれを呼んで、注釈の id とパレットの名前を知る。細かい中身は hiroi_palette、画像は hiroi_page / hiroi_crop。
+</define_tag>`,
+      hiroi_page: `<define_tag name="hiroi_page">
+図面のページを画像（PNG）にして VFS に書き、そのパスを返す。read_file でそのパスを読むと画像として見える。
+Attributes:
+  - page (required): ページ番号（1 始まり）
+  - dpi (optional): 既定 60（A3 で 約 1000 px）。上限 150。字を読むには hiroi_crop で範囲を切り抜くほうがよい
+Note: ページ全体の把握（図面か表か・どこに表があるか）に使う。細かい字は読めない。
+</define_tag>`,
+      hiroi_crop: `<define_tag name="hiroi_crop">
+注釈（人が囲った読みどころ）の切り抜きを 300 dpi の PNG にして VFS に書き、パスを返す（大きければ 1536 px のタイルに分ける）。read_file で読む。
+Attributes:
+  - annotation (required): 注釈の id（hiroi_status の一覧。例 an-0001）
+  - page (optional): 注釈が「全ページ」のとき、どのページの同じ位置を切り抜くか（既定: 注釈のページ）
+  - dpi (optional): 既定 300。上限 400
+Note: 表（器具表・配線表）はこれで読む。読んだら hiroi_apply で書く。
+</define_tag>`,
+      hiroi_palette: `<define_tag name="hiroi_palette">
+パレットの中身を id 付きで返す（カテゴリ・ラベルと規則・見込み・系統・覚え書き）。
+Attributes:
+  - part (optional): カンマ区切り。categories, labels, rules, expected, systems, notes（既定: 全部）
+  - q (optional): 名前の部分一致で絞る
+</define_tag>`,
+      hiroi_apply: `<define_tag name="hiroi_apply">
+パレット・ページの欄・覚え書きへの編集を、まとめて入れる（履歴 1 行。人は元に戻せる）。
+Content: JSON。図面解析の応答と同じ形。要る鍵だけでよい:
+  {
+    "pages":      [{ "page": 36, "title": "電灯設備図 1階平面図", "sheet": "E-36", "kinds": ["図面"], "work": "電灯", "floor": "1F", "scale": "1:200", "summary": "…", "pick": true }],
+    "label_trees":[{ "key": "t1", "name": "部屋" }],
+    "labels":     [{ "key": "l1", "name": "玄関・風除室", "tree": "t1", "parent": null, "source": ["an-0001"] }],
+    "categories": [{ "key": "c1", "name": "照明器具", "parent": null, "size": "個数" },
+                   { "key": "c2", "name": "GS100", "parent": "c1", "size": "個数", "spec": "LED ダウンライト 100形", "source": ["an-0001"] }],
+    "components": [{ "owner": "c3", "material": "c4", "count": 2, "when": ["l9"], "add_slack": true }],
+    "rules":      [{ "label": "l1", "category": "c1", "candidates": ["c2"], "source": ["an-0001"] }],
+    "expected":   [{ "labels": ["l1"], "category": "c2", "count": 4, "source": ["an-0001"] }],
+    "systems":    [{ "name": "1A2", "from": "キュービクル", "to": "L1-1", "category": "c5", "text": "CVT 100 E14×2 (G82)" }],
+    "notes":      [{ "kind": "注意", "text": "…", "pages": [36], "source": ["an-0002"] }]
+  }
+  - key / parent / tree / label / category / candidates / owner / material は、この JSON の中の key で指す。親は同じ JSON に入れる（無ければ根の下に置かれる）
+  - 同じ親の下の同じ名前は、いまあるものを使う（増えない）。既存の項目を指すには、その名前で同じ親の下に書く
+  - size は "個数" か "長さ"。kind は 注意／決まり／疑問／その他。source は注釈の id かページ（"p.36"）
+Returns: 入れた数（ページ・カテゴリ 追加/再利用・ラベル・構成・規則・見込み・系統・覚え書き）と知らせ。
+Note: 一度に全部を書こうとしない。注釈 1 つ読んだら、その分だけ入れる。
+</define_tag>`,
+      hiroi_annotate: `<define_tag name="hiroi_annotate">
+図面の上に注釈（読みどころ）を囲う。人が囲うのと同じもの（図面解析のタブに出る）。囲ったら hiroi_crop で読める。
+Attributes:
+  - page (required): ページ番号（1 始まり）
+  - bbox (required): "x,y,w,h"（PDF のポイント。原点は左上。hiroi_page の画像の画素 ÷ (dpi/72) で換算）
+  - kind (optional): spec（仕様書）| legend（凡例）| schedule（機器表）| wiring（配線表）| note（注記）| layer（層の手がかり）| object（対象の見本）| caution（注意）| title（題欄）。既定 schedule
+  - title (optional): 題（例 "器具表"）
+  - note (optional): 覚え書き（読むときの注意）
+  - all_pages (optional): "true" で、送る全ページの同じ位置（題欄に）
+Returns: 注釈の id
+</define_tag>`,
+      hiroi_undo: `<define_tag name="hiroi_undo">
+最後の編集を元に戻す（人の編集も含む。直前の hiroi_apply を取り消すときに）。
+Attributes: なし
+</define_tag>`,
+      hiroi_open: `<define_tag name="hiroi_open">
+VFS にある PDF を図面として開く。いまの図面と同じなら つなぎ直し、違えばパレットだけ残して新しく始める（図面の上の層と拾いがあれば、画面で利用者に確かめる）。
+Attributes:
+  - path (required): VFS のパス（.pdf）
+</define_tag>`,
+      hiroi_show: `<define_tag name="hiroi_show">
+画面を切り替える（利用者に見せるため）。
+Attributes:
+  - screen (optional): analyze（図面解析）| pick（拾い）| table（集計）| palette（パレット）
+  - page (optional): ページ番号（1 始まり）
+</define_tag>`,
+    };
+
+    const handlers = {
+      async hiroi_status() {
+        return statusText();
+      },
+      async hiroi_page(p) {
+        const n = Number(p.page);
+        const pg = pageByNumber(n);
+        const dpi = Math.min(150, Math.max(20, Number(p.dpi) || 60));
+        const img = await renderRect(n, [0, 0, pg.width, pg.height], dpi / 72);
+        return 'Saved: ' + (await writeShot('p' + String(n).padStart(3, '0') + '_' + dpi + 'dpi.png', img)) + '\n題: ' + (pg.title || '') + (pg.kinds && pg.kinds.length ? '（' + pg.kinds.join('・') + '）' : '');
+      },
+      async hiroi_crop(p) {
+        const a = (store.state.annotations || []).find((x) => x.id === p.annotation);
+        if (!a) throw new Error('注釈 ' + p.annotation + ' は無い（hiroi_status で id を見る）');
+        const own = store.state.pages.find((x) => x.id === a.page);
+        const n = p.page ? Number(p.page) : own ? own.index : null;
+        if (!n) throw new Error('ページが決まらない');
+        if (p.page && !a.allPages && own && own.index !== n) throw new Error('注釈 ' + a.id + ' は p.' + own.index + ' のもの（全ページではない）');
+        const dpi = Math.min(400, Math.max(72, Number(p.dpi) || 300));
+        const tl = A.tilesFor(a.bbox, { scale: dpi / 72 });
+        const out = [];
+        for (let i = 0; i < tl.tiles.length; i++) {
+          const img = await renderRect(n, tl.tiles[i], tl.scale);
+          out.push(await writeShot(a.id + '_p' + String(n).padStart(3, '0') + (tl.tiles.length > 1 ? '_' + (i + 1) : '') + '.png', img));
+        }
+        return '注釈 ' + a.id + ' [' + A.kind(a.kind).name + '] ' + (a.title || '') + ' p.' + n + (a.note ? '\n覚え書き: ' + a.note : '') + '\n読み方: ' + A.kind(a.kind).ask + '\nSaved (' + out.length + '):\n' + out.map((s) => '  ' + s).join('\n');
+      },
+      async hiroi_palette(p) {
+        return paletteText(p.part, p.q) || '（空）';
+      },
+      async hiroi_apply(p) {
+        let raw;
+        try {
+          raw = JSON.parse(String(p.content || '').trim());
+        } catch (e) {
+          throw new Error('JSON として読めない: ' + e.message);
+        }
+        const sum = edit('AI の編集', (S) => A.apply(S, raw, {}));
+        if (!sum) throw new Error('入れられなかった');
+        saveJob();
+        return '入れた: ページ ' + sum.pages + '・カテゴリ +' + sum.categories.added + '（再利用 ' + sum.categories.reused + '）・ラベル +' + sum.labels.added + '（再利用 ' + sum.labels.reused + '）・構成 ' + sum.components + '・規則 ' + sum.rules + '・見込み ' + sum.expected + '・系統 ' + sum.systems + '・覚え書き ' + sum.notes + (sum.warnings.length ? '\n知らせ:\n' + sum.warnings.map((w) => '  - ' + w).join('\n') : '');
+      },
+      async hiroi_annotate(p) {
+        const pg = pageByNumber(Number(p.page));
+        const bbox = String(p.bbox || '').split(/[,\s]+/).filter(Boolean).map(Number);
+        if (bbox.length !== 4 || bbox.some((v) => !Number.isFinite(v)) || bbox[2] <= 0 || bbox[3] <= 0) throw new Error('bbox は "x,y,w,h"（正の数）');
+        const kind = A.kind(p.kind || 'schedule').id;
+        let id = null;
+        const r = edit('AI が囲った', (S) => {
+          id = S.addAnnotation(pg.id, bbox, kind, { title: p.title || '', note: p.note || '', allPages: p.all_pages === 'true' || p.all_pages === true, by: 'llm' });
+          return id;
+        });
+        if (!r) throw new Error('囲えなかった');
+        saveJob();
+        return '囲った: ' + id + ' p.' + pg.index + ' [' + A.kind(kind).name + '] ' + (p.title || '');
+      },
+      async hiroi_undo() {
+        if (!store.undoStack.length) return '戻すものが無い';
+        store.undo();
+        saveJob();
+        return '戻した（残り ' + store.undoStack.length + '）';
+      },
+      async hiroi_open(p) {
+        if (!p.path || !/\.pdf$/i.test(p.path)) throw new Error('path は .pdf');
+        const ok = await openVfsPdf(p.path);
+        return ok ? '開いた: ' + p.path + '（' + store.state.pages.length + ' ページ）' : '開かなかった（利用者が やめた、または読めない）';
+      },
+      async hiroi_show(p) {
+        if (p.screen) setScreen(p.screen);
+        if (p.page) setPage(pageByNumber(Number(p.page)).id);
+        return 'ok';
+      },
+    };
+
+    async function registerTools() {
+      if (!M.tools || !M.tools.register) return false;
+      for (const name of Object.keys(DEFS)) {
+        await M.tools.register({
+          name,
+          description: '拾いツール: ' + name,
+          definition: DEFS[name],
+          handler: async (params) => {
+            try {
+              return await handlers[name](params || {});
+            } catch (e) {
+              return '[Error] ' + (e && e.message ? e.message : String(e));
+            }
+          },
+        });
+      }
+      if (M.ai && M.ai.log) {
+        M.ai.log(Object.values(DEFS).join('\n') + '\n\n[System] 拾いツール（積算支援）の道具が使える。まず hiroi_status。', 'tool_available');
+      }
+      return true;
+    }
+
+    /* ======================================================================
+     * 起動後
+     * ====================================================================== */
+    async function afterBoot() {
+      let args = {};
+      try {
+        args = (await M.system.getArgs()) || {};
+      } catch (e) {
+        /* 引数が無い */
+      }
+      if (args.file && /\.pdf$/i.test(args.file)) {
+        try {
+          await openVfsPdf(args.file);
+        } catch (e) {
+          console.warn(e);
+          toast('開けなかった: ' + args.file, 4000);
+        }
+      }
+      await registerTools();
+      if (typeof window !== 'undefined') window.addEventListener('unload', () => {
+        for (const name of Object.keys(DEFS)) {
+          try {
+            M.tools.unregister(name);
+          } catch (e) {
+            /* */
+          }
+        }
+      });
+    }
+
+    return { saveJob, flush, loadJob, savePdf, loadPdf, reset, openVfsPdf, afterBoot, registerTools, handlers, DEFS, statusText, paletteText, paths: { BASE, JOB, PDF, PDF_META, SHOTS } };
+  };
+})();
