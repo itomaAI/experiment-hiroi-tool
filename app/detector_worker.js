@@ -1,7 +1,7 @@
 /*
  * 拾いツール — 口「検出」の Worker（T-0646）。ONNX（GP の特徴抽出器）をタイルごとに回し、インクの近くのセルだけ int8 で返す。
  * 受けるもの:
- *   { type: 'init', ortUrl, wasmPaths, modelUrl, ep: 'webgpu' | 'wasm' }      → { type: 'ready', ep } か { type: 'error', message }
+ *   { type: 'init', ortUrl, wasmPaths, model: URL の文字列 | ArrayBuffer, ep: 'webgpu' | 'wasm' }      → { type: 'ready', ep } か { type: 'error', message }
  *   { type: 'tile', id, rgba: Uint8ClampedArray, width, height, ox, oy, keep: [x0, y0, x1, y1]（px。この範囲のセルだけ返す）, stride }
  *     → { type: 'tile', id, cells: Uint32Array（タイルの中のセル index: row * tw + col）, feat: Int8Array, scale: Float32Array, tw, th, ms }
  * 画像は 0〜1 の RGB。ink_normalize はモデルの中。
@@ -20,11 +20,12 @@ async function init(m) {
   importScripts(m.ortUrl);
   self.ort.env.wasm.wasmPaths = m.wasmPaths;
   self.ort.env.wasm.numThreads = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+  const model = typeof m.model === 'string' ? m.model : new Uint8Array(m.model);
   const tries = m.ep === 'wasm' ? ['wasm'] : ['webgpu', 'wasm'];
   let lastErr = null;
   for (const ep of tries) {
     try {
-      sess = await self.ort.InferenceSession.create(m.modelUrl, { executionProviders: [ep], graphOptimizationLevel: 'all' });
+      sess = await self.ort.InferenceSession.create(model, { executionProviders: [ep], graphOptimizationLevel: 'all' });
       epUsed = ep;
       return;
     } catch (e) {
@@ -96,7 +97,7 @@ self.onmessage = async (ev) => {
   try {
     if (m.type === 'init') {
       await init(m);
-      self.postMessage({ type: 'ready', ep: epUsed, threads: self.ort.env.wasm.numThreads });
+      self.postMessage({ type: 'ready', ep: epUsed, threads: self.ort.env.wasm.numThreads, gpu: !!self.navigator.gpu, coi: !!self.crossOriginIsolated, hc: self.navigator.hardwareConcurrency || null });
     } else if (m.type === 'tile') {
       const out = await tile(m);
       self.postMessage(out, [out.cells.buffer, out.feat.buffer, out.scale.buffer]);

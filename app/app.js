@@ -138,7 +138,7 @@
 
   async function boot() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
-    if (ENV === 'itera' && self.SMIteraBridge) bridge = self.SMIteraBridge({ store, edit, app, toast, setScreen, setPage, attachPdf, confirmBox });
+    if (ENV === 'itera' && self.SMIteraBridge) bridge = self.SMIteraBridge({ store, edit, app, toast, setScreen, setPage, attachPdf, confirmBox, P, renderAll: () => renderAll(), gp: { detector: () => detector, search: (c, pg, o) => gpSearch(c, pg, o), approveAll: (pg, c) => gpApproveAll(pg, c), rejectAll: (pg, c) => gpRejectAll(pg, c), approve: (id) => gpApprove(id), reject: (id) => gpReject(id) } });
     const saved = bridge ? await bridge.loadJob() : load();
     if (saved) store.replace(SMA.ensure(saved));
     store.onChange(onStoreChange);
@@ -3166,7 +3166,7 @@
   /* ======================================================================
    * GP の提案（T-0646）。口「検出」は app/detector.js、計算は core/gp.js
    * ====================================================================== */
-  const detector = self.SMDetector && self.SMGP ? self.SMDetector({ store, P, app, IDB, toast, modelUrl: self.HIROI_MODEL_URL }) : null;
+  const detector = self.SMDetector && self.SMGP ? self.SMDetector({ store, P, app, IDB, toast, modelUrl: self.HIROI_MODEL_URL, loadModel: () => (bridge && bridge.loadModel ? bridge.loadModel() : null) }) : null; // bridge は起動のあとに入るので、呼ぶときに見る
   if (detector) detector.onChange(() => renderPanel());
   const gpNextId = () => { const pg = page(); if (!pg) return null; const list = store.proposalsOn(pg.id).filter((p) => p.score >= app.gp.threshold).sort((a, b) => b.score - a.score); return list.length ? list[0].id : null; };
   function gpSelectNext() {
@@ -3224,7 +3224,7 @@
     if (!detector) return;
     try {
       await detector.ensurePage(pageId);
-      toast('特徴量を用意した（' + (detector.ep || '') + '）', 2000);
+      toast('特徴量を用意した（' + ((detector.envText && detector.envText()) || detector.ep || '保存から') + '）', 2500);
     } catch (e) {
       toast('特徴量を用意できなかった: ' + e.message, 6000);
     }
@@ -3247,7 +3247,7 @@
     else if (st.status === 'working') box.append(line('計算中… ' + st.done + ' / ' + (st.total || '?') + ' タイル'));
     else if (st.status === 'error') box.append(line('できなかった: ' + st.error), h('div', { class: 'acts' }, h('button', { onclick: () => gpPrepare(pg.id) }, 'もう一度')));
     else {
-      box.append(line('特徴量あり（' + (st.ms ? Math.round(st.ms / 100) / 10 + ' 秒' : '保存から') + '）。' + (catName ? '「' + catName + '」の手本 ' + exemplars : '右の木でカテゴリを選ぶ')));
+      box.append(line('特徴量あり（' + (st.ms ? Math.round(st.ms / 100) / 10 + ' 秒' + (detector.envText && detector.envText() ? '・' + detector.envText() : '') : '保存から') + '）。' + (catName ? '「' + catName + '」の手本 ' + exemplars : '右の木でカテゴリを選ぶ')));
       box.append(h('div', { class: 'acts' }, h('button', { class: 'primary', disabled: cat === 'cat-root' || !exemplars ? '' : null, onclick: () => { gpSearch(cat, pg.id); renderAll(); } }, '探す'), h('label', { class: 'muted' }, '閾値 ', h('input', { type: 'range', min: 0.3, max: 0.95, step: 0.05, value: app.gp.threshold, style: 'width:90px;vertical-align:middle', oninput: (e) => { app.gp.threshold = Number(e.target.value); renderAll(); } }), ' ' + Math.round(app.gp.threshold * 100) + '%'), h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: app.gp.auto ? '' : null, onchange: (e) => { app.gp.auto = e.target.checked; } }), ' 箱を置いたら探す')));
     }
     if (here.length) {

@@ -12,6 +12,7 @@
  *            hiroi_undo     最後の編集を元に戻す
  *            hiroi_open     VFS の PDF を開く
  *            hiroi_show     画面（タブ・ページ）を切り替える
+ *            hiroi_detect   GP の提案（T-0646）: ページの特徴量を用意する・手本から探す・提案をまとめて承認／退ける
  *          AI が書いたものは、図面解析と同じく by: 'llm' を持ち、人が画面で直せる。
  *   起動   spawn の引数 file=<VFS の PDF> があれば、その図面を開く
  *
@@ -26,11 +27,16 @@
   const PDF = BASE + '/source.pdf';
   const PDF_META = BASE + '/source.json';
   const SHOTS = BASE + '/shots';
+  // GP の特徴抽出器（ONNX・3.7 MB）。VFS にあればそれ（上から順）、無ければホストのオリジン（配信物の public/demo/hiroi/）から取る
+  const MODEL_VFS = ['data/apps/hiroi-tool/gp_features_v1.onnx', 'system/demo/hiroi/model/gp_features_v1.onnx'];
+  const MODEL_WEB = '/demo/hiroi/gp_features_v1.onnx';
 
   self.SMIteraBridge = function (ctx) {
     const M = self.MetaOS;
     if (!M) return null;
     const { store, edit, app, toast, setScreen, setPage, attachPdf } = ctx;
+    const GP = ctx.gp || null; // 口「検出」と提案の操作（app.js の gp*）。無ければ hiroi_detect は「無い」と返す
+    const P = ctx.P || (() => store.palette);
     const A = self.SMA;
     const SM = self.SM;
 
@@ -95,6 +101,45 @@
         console.warn(e);
         toast('PDF を VFS に残せなかった（次に開くとき、もう一度選んでください）', 4000);
       }
+    }
+    // モデルの中身（ArrayBuffer）。口「検出」（app/detector.js）が Worker を起こすときに呼ぶ。1 度取ったら持つ
+    let modelCache = null;
+    function loadModel() {
+      if (modelCache) return modelCache;
+      modelCache = (async () => {
+        for (const p of MODEL_VFS) {
+          try {
+            if (await M.fs.exists(p)) {
+              const b = await M.fs.read(p, { encoding: 'binary' });
+              if (b && b.byteLength > 1000) return b.buffer ? b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) : b;
+            }
+          } catch (e) {
+            console.warn('[itera] model read failed', p, e);
+          }
+        }
+        const url = self.HIROI_MODEL_URL || ((self.location.ancestorOrigins && self.location.ancestorOrigins[0]) || '') + MODEL_WEB;
+        if (!M.net) throw new Error('モデルが VFS に無く、ホストから取る口も無い: ' + url);
+        // ホストに落としてもらって VFS に置く（次からは VFS から。IPC に 3.7 MB を通さない）。download が無ければ fetch
+        if (M.net.download) {
+          try {
+            await M.net.download(url, MODEL_VFS[0]);
+            const b = await M.fs.read(MODEL_VFS[0], { encoding: 'binary' });
+            if (b && b.byteLength > 1000) return b.buffer ? b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) : b;
+            throw new Error('落としたファイルが小さすぎる（' + (b ? b.byteLength : 0) + ' bytes）');
+          } catch (e) {
+            console.warn('[itera] model download failed, trying fetch', e);
+            try { await M.fs.delete(MODEL_VFS[0], { permanent: true }); } catch (e2) { /* 無ければよい */ }
+          }
+        }
+        if (!M.net.fetch) throw new Error('モデルを取れない: ' + url);
+        const r = await M.net.fetch(url, { responseType: 'arraybuffer' });
+        if (!r || !r.data || (r.status && r.status >= 400)) throw new Error('モデルを取れない: ' + url + (r && r.status ? ' (HTTP ' + r.status + ')' : ''));
+        const d = r.data;
+        if (d.byteLength < 1000) throw new Error('モデルが小さすぎる（' + d.byteLength + ' bytes）: ' + url);
+        return d.buffer ? d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) : d;
+      })();
+      modelCache.catch(() => { modelCache = null; });
+      return modelCache;
     }
     async function loadPdf() {
       const meta = await readJson(PDF_META);
@@ -170,13 +215,43 @@
       lines.push('注釈: ' + anns.length + (anns.length ? '\n' + anns.join('\n') : ''));
       const pal = st.palette;
       lines.push('パレット: カテゴリ ' + pal.categories.length + '・ラベル ' + pal.labels.length + '・規則 ' + pal.labels.reduce((s, l) => s + ((l.rules && l.rules.length) || 0), 0) + '・見込み ' + ((pal.expected && pal.expected.length) || 0) + '・系統 ' + ((pal.systems && pal.systems.length) || 0));
-      lines.push('図面の上: エリア ' + st.areas.length + '・ルート ' + st.routes.length + '・拾い ' + st.pickups.length);
+      lines.push('図面の上: エリア ' + st.areas.length + '・ルート ' + st.routes.length + '・拾い ' + st.pickups.length + '（箱 ' + st.pickups.filter((p) => p.kind === 'box').length + '・うち GP の承認 ' + st.pickups.filter((p) => p.by === 'gp').length + '）');
+      lines.push(gpText());
       const notes = (st.analysis && st.analysis.notes) || [];
       lines.push('覚え書き: ' + notes.length + '・元に戻せる編集 ' + store.undoStack.length);
       if (st.analysis && st.analysis.focus) lines.push('今回の範囲: ' + st.analysis.focus);
       const digest = A.paletteDigest(pal, 80);
       if (digest) lines.push('', digest);
       return lines.join('\n');
+    }
+    // GP の提案の様子（hiroi_status の 1 行。詳しくは hiroi_detect）
+    function gpText() {
+      const det = GP && GP.detector();
+      if (!det) return 'GP: （この環境では使えない）';
+      const st = store.state;
+      const feats = [];
+      for (const pg of st.pages) {
+        const x = det.status(pg.id);
+        if (x.status === 'none') continue;
+        feats.push('p.' + pg.index + ' ' + (x.status === 'ready' ? '済' : x.status === 'working' ? '計算中 ' + x.done + '/' + (x.total || '?') : 'できなかった'));
+      }
+      const props = st.proposals || [];
+      const byPage = {};
+      for (const pr of props) { const pg = st.pages.find((p) => p.id === pr.page); const k = 'p.' + (pg ? pg.index : '?'); byPage[k] = (byPage[k] || 0) + 1; }
+      return 'GP: 特徴量 ' + (feats.length ? feats.join('・') : '無し') + '／提案 ' + props.length + (props.length ? '（' + Object.entries(byPage).map(([k, n]) => k + ' ' + n).join('・') + '・閾値 ' + Math.round(thrDefault() * 100) + '%）' : '') + '／退けた場所 ' + ((st.rejections || []).length);
+    }
+    const thrDefault = () => (app && app.gp && typeof app.gp.threshold === 'number' ? app.gp.threshold : 0.5);
+    function categoryByRef(ref) {
+      const pal = P();
+      const r = String(ref || '').trim();
+      if (!r) throw new Error('category が要る（id か名前）');
+      const c = pal.categories.find((c) => c.id === r) || pal.categories.filter((c) => c.name === r);
+      if (Array.isArray(c)) {
+        if (c.length === 1) return c[0];
+        if (c.length > 1) throw new Error('名前「' + r + '」のカテゴリが ' + c.length + ' つある。id で指す: ' + c.map((x) => x.id + '（親 ' + ((pal.category(x.parent) || {}).name || '根') + '）').join('・'));
+        throw new Error('カテゴリ「' + r + '」は無い（hiroi_palette で見る）');
+      }
+      return c;
     }
     function paletteText(part, q) {
       const st = store.state;
@@ -298,6 +373,17 @@ Attributes:
   - screen (optional): analyze（図面解析）| pick（拾い）| table（集計）| palette（パレット）
   - page (optional): ページ番号（1 始まり）
 </define_tag>`,
+      hiroi_detect: `<define_tag name="hiroi_detect">
+GP の提案（記号の検出）。利用者が置いた箱を手本に、同じ記号の場所をページから探して「提案」（点線の箱）にする。提案は拾いではない —— 承認すると拾い（箱）になり、集計に数えられる。退けた場所は次から負例になる。
+Attributes:
+  - action (required): prepare（ページの特徴量を用意する。数秒〜数十秒）| search（手本から探す）| approve（提案を承認）| reject（提案を退ける）
+  - page (required): ページ番号（1 始まり）
+  - category (search / approve / reject。search では必須): カテゴリの id か名前。search はこのカテゴリ（とその下）の箱が手本・他のカテゴリの箱が負例。approve / reject では省くと全部
+  - threshold (optional): 0〜1。search で返す・approve で承認する提案の下限（既定は画面の閾値 50%）
+  - ids (optional): approve / reject で、提案の id をカンマ区切り（省くと page のその category の提案を全部）
+Returns: prepare → 状態（セルの数・秒・WebGPU か wasm か）／search → 提案の一覧「id bbox(x,y,w,h pt) 点数」（手本と負例の数つき）／approve / reject → 数
+Note: 手本が無ければ search は探せない —— まず利用者に箱を 1 つ置いてもらう（hiroi_apply では箱は置けない）。承認は利用者の判断を代行することになるので、点数の高いものだけに留め、低いものは利用者に見てもらう。
+</define_tag>`,
     };
 
     const handlers = {
@@ -373,6 +459,50 @@ Attributes:
         if (p.page) setPage(pageByNumber(Number(p.page)).id);
         return 'ok';
       },
+      async hiroi_detect(p) {
+        const det = GP && GP.detector();
+        if (!det) throw new Error('この環境では GP の提案が使えない（口「検出」が無い）');
+        const pg = pageByNumber(Number(p.page));
+        const action = String(p.action || '').trim();
+        const thr = p.threshold !== undefined && p.threshold !== '' ? Math.max(0, Math.min(1, Number(p.threshold))) : thrDefault();
+        const fmt = (pr) => pr.id + ' [' + pr.bbox.map((v) => n2(v)).join(',') + '] ' + Math.round(pr.score * 100) + '%';
+        if (action === 'prepare') {
+          const fp = await det.ensurePage(pg.id);
+          const x = det.status(pg.id);
+          if (ctx.renderAll) ctx.renderAll();
+          return 'p.' + pg.index + ' の特徴量: 済（セル ' + fp.meta.cells + (x.ms ? '・' + Math.round(x.ms / 100) / 10 + ' 秒' : '・保存から') + ((det.envText && det.envText()) || fp.meta.ep ? '・' + ((det.envText && det.envText()) || fp.meta.ep) : '') + '）';
+        }
+        if (action === 'search') {
+          const cat = categoryByRef(p.category);
+          if (det.status(pg.id).status !== 'ready') await det.ensurePage(pg.id);
+          const n = GP.search(cat.id, pg.id, { quiet: true });
+          if (ctx.renderAll) ctx.renderAll();
+          if (n < 0) {
+            const ex = store.state.pickups.filter((b) => b.kind === 'box' && (b.category === cat.id || P().categoryAncestors(b.category).includes(cat.id)));
+            return '手本が無い: 「' + cat.name + '」の箱が' + (ex.length ? '特徴量のあるページに無い（箱 ' + ex.length + ' は特徴量の無いページ。そのページを prepare する）' : '1 つも無い。利用者に 1 つ囲ってもらう');
+          }
+          const list = store.proposalsOn(pg.id).filter((pr) => pr.category === cat.id && pr.score >= thr).sort((a, b) => b.score - a.score);
+          saveJob();
+          return '「' + cat.name + '」の提案 p.' + pg.index + ': ' + list.length + '（閾値 ' + Math.round(thr * 100) + '%・全 ' + n + '）' + (list.length ? '\n' + list.map(fmt).join('\n') : '') + '\n利用者の画面に点線で出ている。承認は hiroi_detect action=approve（ids で選べる）';
+        }
+        if (action === 'approve' || action === 'reject') {
+          const cat = p.category ? categoryByRef(p.category) : null;
+          const ids = String(p.ids || '').split(/[,\s]+/).filter(Boolean);
+          let list = store.proposalsOn(pg.id).filter((pr) => !cat || pr.category === cat.id);
+          if (ids.length) {
+            const miss = ids.filter((id) => !list.some((pr) => pr.id === id));
+            if (miss.length) throw new Error('提案が無い: ' + miss.join(', ') + '（search の戻りの id を使う）');
+            list = list.filter((pr) => ids.includes(pr.id));
+          } else if (action === 'approve') list = list.filter((pr) => pr.score >= thr);
+          if (!list.length) return '対象の提案が無い';
+          const r = edit(action === 'approve' ? '提案を承認（AI・' + list.length + '）' : '提案を退ける（AI・' + list.length + '）', (S) => { for (const pr of list) action === 'approve' ? S.approveProposal(pr.id) : S.rejectProposal(pr.id); return list.length; });
+          app.selection = null;
+          if (ctx.renderAll) ctx.renderAll();
+          saveJob();
+          return (action === 'approve' ? '承認した ' : '退けた ') + (r || 0) + '（p.' + pg.index + (cat ? '・' + cat.name : '') + '）。残りの提案 ' + store.proposalsOn(pg.id).length;
+        }
+        throw new Error('action は prepare | search | approve | reject');
+      },
     };
 
     async function registerTools() {
@@ -427,6 +557,6 @@ Attributes:
       });
     }
 
-    return { saveJob, flush, loadJob, savePdf, loadPdf, reset, openVfsPdf, afterBoot, registerTools, handlers, DEFS, statusText, paletteText, paths: { BASE, JOB, PDF, PDF_META, SHOTS } };
+    return { saveJob, flush, loadJob, savePdf, loadPdf, loadModel, reset, openVfsPdf, afterBoot, registerTools, handlers, DEFS, statusText, paletteText, paths: { BASE, JOB, PDF, PDF_META, SHOTS, MODEL_VFS, MODEL_WEB } };
   };
 })();

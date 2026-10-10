@@ -67,7 +67,7 @@ test('道具を登録し、定義を tool_available で知らせる', async () =
   const M = fakeMetaOS();
   const { bridge } = ctxWith(M);
   await bridge.afterBoot();
-  for (const n of ['hiroi_status', 'hiroi_page', 'hiroi_crop', 'hiroi_palette', 'hiroi_apply', 'hiroi_annotate', 'hiroi_undo', 'hiroi_open', 'hiroi_show']) assert.ok(M.registered.has(n), n);
+  for (const n of ['hiroi_status', 'hiroi_page', 'hiroi_crop', 'hiroi_palette', 'hiroi_apply', 'hiroi_annotate', 'hiroi_undo', 'hiroi_open', 'hiroi_show', 'hiroi_detect']) assert.ok(M.registered.has(n), n);
   assert.strictEqual(M.log.length, 1);
   assert.strictEqual(M.log[0].type, 'tool_available');
   assert.ok(M.log[0].text.includes('<define_tag name="hiroi_apply">'));
@@ -139,4 +139,81 @@ test('hiroi_show: 画面とページを切り替える', async () => {
   const { bridge, shown } = ctxWith(M);
   await bridge.handlers.hiroi_show({ screen: 'palette', page: '2' });
   assert.deepStrictEqual(shown, [['screen', 'palette'], ['page', 'pg-002']]);
+});
+
+test('hiroi_detect: 口「検出」が無ければ使えないと言う。hiroi_status の GP の行もそれを言う', async () => {
+  const M = fakeMetaOS();
+  const { bridge } = ctxWith(M);
+  const h = bridge.handlers;
+  assert.ok((await h.hiroi_status()).includes('GP: （この環境では使えない）'));
+  await assert.rejects(h.hiroi_detect({ action: 'prepare', page: '1' }), /使えない/);
+});
+
+test('hiroi_detect: prepare → search → approve / reject（口「検出」と提案の操作は偽物。提案はストアに入れる）', async () => {
+  const M = fakeMetaOS();
+  const store = new SM.Store();
+  A.ensure(store.state);
+  store.state.pages = [{ id: 'pg-001', index: 1, title: 'p.1', width: 842, height: 595 }];
+  store.state.doc = { name: 'x.pdf', pages: 1, fingerprint: 'fp' };
+  const light = store.addCategory('cat-root', '照明', { size: '個数' });
+  const a = store.addCategory(light, 'A', { size: '個数' });
+  store.addCategory(light, 'B', { size: '個数' });
+  store.touchPalette();
+  const status = new Map();
+  const calls = [];
+  const det = {
+    status: (pid) => status.get(pid) || { status: 'none' },
+    async ensurePage(pid) { calls.push(['ensure', pid]); status.set(pid, { status: 'ready', ms: 4400 }); return { meta: { cells: 1234, ep: 'webgpu' } }; },
+  };
+  const edit = (label, fn) => store.commit(label, (st, S) => fn(S, st));
+  const gp = {
+    detector: () => det,
+    search(cat, pid) {
+      calls.push(['search', cat, pid]);
+      const boxes = store.state.pickups.filter((b) => b.kind === 'box' && b.category === cat);
+      if (!boxes.length) return -1;
+      edit('提案を更新', (S) => S.replaceProposals(cat, pid, [{ bbox: [100, 100, 16, 16], score: 0.92 }, { bbox: [300, 200, 16, 16], score: 0.7 }, { bbox: [500, 400, 16, 16], score: 0.35 }], 'run'));
+      return 3;
+    },
+  };
+  const ctx = { store, app: { gp: { threshold: 0.5, auto: true } }, edit, toast: () => {}, setScreen: () => {}, setPage: () => {}, attachPdf: async () => true, confirmBox: async () => true, P: () => store.palette, gp };
+  const bridge = load(M)(ctx);
+  const h = bridge.handlers;
+  // 手本が無い
+  let r = await h.hiroi_detect({ action: 'search', page: '1', category: 'A' });
+  assert.ok(r.includes('手本が無い') && r.includes('1 つも無い'), r);
+  assert.deepStrictEqual(calls, [['ensure', 'pg-001'], ['search', a, 'pg-001']]);
+  // prepare は済んでいる → 保存から／秒
+  r = await h.hiroi_detect({ action: 'prepare', page: '1' });
+  assert.ok(r.includes('セル 1234') && r.includes('4.4 秒') && r.includes('webgpu'), r);
+  // 箱を置くと探せる。閾値の上だけ返す
+  store.addBox('pg-001', a, [50, 50, 16, 16]);
+  r = await h.hiroi_detect({ action: 'search', page: '1', category: 'A' });
+  assert.ok(r.includes('提案 p.1: 2（閾値 50%・全 3）'), r);
+  assert.ok(/pr-\d+ \[100,100,16,16\] 92%/.test(r), r);
+  assert.ok(!r.includes('35%'), r);
+  assert.ok((await h.hiroi_status()).includes('提案 3（p.1 3・閾値 50%）'), await h.hiroi_status());
+  // 名前が無い・曖昧
+  await assert.rejects(h.hiroi_detect({ action: 'search', page: '1', category: 'Z' }), /無い/);
+  store.addCategory(light, 'A', { size: '個数' });
+  store.touchPalette();
+  await assert.rejects(h.hiroi_detect({ action: 'search', page: '1', category: 'A' }), /2 つある/);
+  // 承認: 閾値の上を全部 → 箱 2（by gp）。低いのは残る
+  r = await h.hiroi_detect({ action: 'approve', page: '1', category: a });
+  assert.ok(r.startsWith('承認した 2'), r);
+  assert.strictEqual(store.state.pickups.filter((b) => b.by === 'gp').length, 2);
+  assert.strictEqual(store.proposalsOn('pg-001').length, 1);
+  // ids で退ける → 負例
+  const rest = store.proposalsOn('pg-001')[0];
+  await assert.rejects(h.hiroi_detect({ action: 'reject', page: '1', ids: 'pr-9999' }), /提案が無い/);
+  r = await h.hiroi_detect({ action: 'reject', page: '1', ids: rest.id });
+  assert.ok(r.startsWith('退けた 1'), r);
+  assert.strictEqual(store.state.rejections.length, 1);
+  assert.strictEqual(store.proposalsOn('pg-001').length, 0);
+  assert.strictEqual(await h.hiroi_detect({ action: 'approve', page: '1' }), '対象の提案が無い');
+  // 元に戻せる（承認も退けるも履歴 1 行）
+  store.undo();
+  assert.strictEqual(store.state.rejections.length, 0);
+  assert.strictEqual(store.proposalsOn('pg-001').length, 1);
+  await assert.rejects(h.hiroi_detect({ action: 'x', page: '1' }), /action は/);
 });

@@ -6,7 +6,8 @@
  *   features             Map(pageId → SMGP.Features)
  *   propose(category, pageIds, opts)   手本（箱）から GP を当てはめ、ページごとの提案を返す（ストアには入れない。入れるのは画面）
  *
- * モデル（ONNX・3.7 MB）の URL は ctx.modelUrl（無ければ ../data/gp_features_v1.onnx）。onnxruntime-web は CDN。
+ * モデル（ONNX・3.7 MB）は ctx.loadModel()（async。URL の文字列か ArrayBuffer を返す。Itera の上では app/itera.js が VFS かホストから取る）、
+ * 無ければ ctx.modelUrl、それも無ければ ../data/gp_features_v1.onnx。onnxruntime-web は CDN。
  * 画面（app.js）とは ctx だけでつながる: { store, P, app, IDB, toast, onChange }
  */
 (function () {
@@ -28,6 +29,7 @@
     let worker = null;
     let ready = null;
     let ep = null;
+    let env = null; // Worker の ready: { ep, threads, gpu, coi, hc }。何で動いたかを人と AI に見せる
     let queue = Promise.resolve();
     let pending = new Map(); // id → resolve
     let seq = 0;
@@ -37,13 +39,20 @@
 
     function ensureWorker() {
       if (ready) return ready;
-      ready = new Promise((res, rej) => {
+      ready = new Promise(async (res, rej) => {
         if (!self.SMDetectorWorkerMain) return rej(new Error('detector_worker.js が読まれていない'));
+        let model;
+        try {
+          model = (ctx.loadModel && (await ctx.loadModel())) || modelUrl();
+        } catch (e) {
+          return rej(new Error('モデルを取れない: ' + ((e && e.message) || e)));
+        }
+        if (model && model.buffer instanceof ArrayBuffer) model = model.buffer.slice(model.byteOffset, model.byteOffset + model.byteLength);
         const src = '(' + self.SMDetectorWorkerMain.toString() + ')()';
         worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
         worker.onmessage = (ev) => {
           const m = ev.data;
-          if (m.type === 'ready') { ep = m.ep; res(m); return; }
+          if (m.type === 'ready') { ep = m.ep; env = { ep: m.ep, threads: m.threads, gpu: m.gpu, coi: m.coi, hc: m.hc }; res(m); return; }
           if (m.type === 'error' && m.id === undefined) { rej(new Error(m.message)); return; }
           const p = pending.get(m.id);
           if (!p) return;
@@ -52,7 +61,7 @@
           else p.resolve(m);
         };
         worker.onerror = (e) => rej(new Error(e.message || 'worker error'));
-        worker.postMessage({ type: 'init', ortUrl: ORT_BASE + 'ort.webgpu.min.js', wasmPaths: ORT_BASE, modelUrl: modelUrl(), ep: ctx.ep || 'auto' });
+        worker.postMessage({ type: 'init', ortUrl: ORT_BASE + 'ort.webgpu.min.js', wasmPaths: ORT_BASE, model, ep: ctx.ep || 'auto' }, model instanceof ArrayBuffer ? [model] : []);
       });
       ready.catch(() => { ready = null; });
       return ready;
@@ -224,6 +233,15 @@
       notify();
     }
 
-    return { ensurePage, status, features, propose, onChange: (fn) => listeners.push(fn), forgetAll, get ep() { return ep; }, SCALE, modelUrl };
+    // 何で動いたか（短い文）。例 "WebGPU" / "wasm 4 スレッド" / "wasm 1 スレッド（WebGPU 無し・cross-origin isolated でない）"
+    function envText() {
+      if (!env) return '';
+      if (env.ep === 'webgpu') return 'WebGPU';
+      const why = [];
+      if (!env.gpu) why.push('WebGPU 無し');
+      if (!env.coi) why.push('cross-origin isolated でない');
+      return 'wasm ' + (env.threads || 1) + ' スレッド' + (why.length ? '（' + why.join('・') + '）' : '');
+    }
+    return { ensurePage, status, features, propose, onChange: (fn) => listeners.push(fn), forgetAll, get ep() { return ep; }, get env() { return env; }, envText, SCALE, modelUrl };
   };
 })();
