@@ -245,7 +245,7 @@
    *   pickups   拾い（箱・線）。線は path（線分の列）と、線分ごとの長さの上書き（lengths）を持つ
    */
   M.emptyState = function (paletteDef) {
-    return { format: 5, doc: { name: '', pages: null, demo: false }, palette: paletteDef || M.emptyPalette(), pages: [], areas: [], nodes: [], segments: [], routes: [], pickups: [], annotations: [], analysis: { notes: [], runs: [] }, seq: { ar: 0, nd: 0, sg: 0, rt: 0, pk: 0, lb: 0, ct: 0, an: 0, nt: 0 } };
+    return { format: 5, doc: { name: '', pages: null, demo: false }, palette: paletteDef || M.emptyPalette(), pages: [], areas: [], nodes: [], segments: [], routes: [], pickups: [], annotations: [], proposals: [], rejections: [], analysis: { notes: [], runs: [] }, seq: { ar: 0, nd: 0, sg: 0, rt: 0, pk: 0, lb: 0, ct: 0, an: 0, nt: 0, pr: 0 } };
   };
   const hasLen = (x) => !!x && ((x.length_h !== null && x.length_h !== undefined) || (x.length_v !== null && x.length_v !== undefined));
   M.hasLen = hasLen;

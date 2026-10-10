@@ -1342,7 +1342,8 @@
           setTimeout(() => { window.addEventListener('pointerdown', close, true); window.addEventListener('keydown', esc, true); }, 0);
         },
         onKey(e) {
-          if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection();
+          // preventDefault を立てて、下の共通の onKey で二度目の deleteSelection が走らないようにする（提案を退けると次の提案が選ばれるので、二度走ると 2 つ退けてしまう。T-0646）
+          if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
         },
         cancel() {
           grab.cancel();
