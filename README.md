@@ -96,4 +96,4 @@ open http://127.0.0.1:8792/app/index.html
 | `tests/ui/smoke.mjs` | 画面の試験（playwright。白紙の PDF を作って通す。`npm install` のあと `node tests/ui/smoke.mjs`） |
 | `tests/ui/sample.mjs` | サンプル図面での試験（PDF は公開していないので、`data/sample.pdf` が在るときだけ走る） |
 
-PDF の描画には [pdf.js](https://mozilla.github.io/pdf.js/) 2.16 を、図面解析で PDF のページを切り出すのには [pdf-lib](https://pdf-lib.js.org/) 1.17 を、GP の特徴量の計算には [onnxruntime-web](https://onnxruntime.ai/) 1.22 を、CDN から読みます。特徴抽出器の ONNX（3.7 MB）は `data/gp_features_v1.onnx` に置きます（このリポジトリには入っていません）。
+PDF の描画には [pdf.js](https://mozilla.github.io/pdf.js/) 2.16 を、図面解析で PDF のページを切り出すのには [pdf-lib](https://pdf-lib.js.org/) 1.17 を、GP の特徴量の計算には [onnxruntime-web](https://onnxruntime.ai/) 1.22 を、CDN から読みます。特徴抽出器の ONNX（3.7 MB・`data/gp_features_v1.onnx`。核のパラメータは `data/meta.json`）はこのリポジトリに入っています（図面の PDF と画面写真は入れません）。

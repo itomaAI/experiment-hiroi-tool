@@ -17,7 +17,7 @@
 
 | 段 | どこ | 何をするか |
 | :-- | :-- | :-- |
-| 特徴量 | `app/detector.js`（口「検出」）＋ `app/detector_worker.js`（Worker） | ページを 360 dpi で 1 回描き、1024 px のタイル（重なり 64 px）に切って Worker へ。Worker は ONNX（`data/gp_features_v1.onnx`・3.7 MB。P-0019 で学習した特徴抽出器）を onnxruntime-web（CDN）で回し、**インクの近くのセル（8 px 刻み）だけ** 128 次元を int8 ＋ セルごとの倍率で返す。ページ全体で組み立てて IndexedDB `feat:<図面の指紋>:<ページ>` に置く |
+| 特徴量 | `app/detector.js`（口「検出」）＋ `app/detector_worker.js`（Worker） | ページを 360 dpi で 1 回描き、1024 px のタイル（重なり 64 px）に切って Worker へ。Worker は ONNX（`data/gp_features_v1.onnx`・3.7 MB・リポジトリに入っている。P-0019 で学習した特徴抽出器。核のパラメータは `data/meta.json`）を onnxruntime-web（CDN）で回し、**インクの近くのセル（8 px 刻み）だけ** 128 次元を int8 ＋ セルごとの倍率で返す。ページ全体で組み立てて IndexedDB `feat:<図面の指紋>:<ページ>` に置く |
 | GP | `core/gp.js`（画面を持たない。node でも動く） | 手本（そのカテゴリとその下の箱の中心の特徴ベクトル。y=1）と負例（他のカテゴリの箱・退けた場所。y=0）で GP 回帰（RBF 核。核のパラメータは学習済みの固定値 `DEFAULT_KERNEL`）。全セルの事後平均を logit に通して点数にし、閾値の上から順に、**手本の大きさの 1.1 倍より近いものを除いて**（既にある箱・退けた場所の近くも）拾う |
 | データ | `core/model.js` | `proposals`（id・ページ・カテゴリ・bbox・score・run）と `rejections`（ページ・カテゴリ・中心）。`approveProposal` → `addBox(…, { by: 'gp', score })`。`rejectProposal` → rejections に 1 行。どちらも履歴 1 行（元に戻せる） |
 | 画面 | `app/app.js` | 点線の提案・当たり判定・右の板「提案（GP）」・Enter／Delete・まとめて承認・箱を置いたら探す |

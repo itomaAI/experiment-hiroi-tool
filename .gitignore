@@ -1,4 +1,7 @@
 shots/
-data/
+# 図面（PDF・画面写真）は公開しない。GP の特徴抽出器（ONNX と meta）だけ入れる
+data/*
+!data/gp_features_v1.onnx
+!data/meta.json
 node_modules/
 .DS_Store
