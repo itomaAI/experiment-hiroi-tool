@@ -125,6 +125,15 @@ test('保存: 変えると少し待って job.json を VFS に書く。読み直
   assert.ok(!M.files.has(bridge.paths.JOB) && !M.files.has(bridge.paths.PDF));
 });
 
+test('hiroi_page の戻りに、ページの大きさと px → pt の換算を添える（canvas 無しでは描けないので、文の部分だけ）', async () => {
+  const M = fakeMetaOS();
+  const { bridge } = ctxWith(M);
+  // 描画は canvas が要るので失敗する。失敗の前に pageByNumber が通ることだけ確かめる
+  await assert.rejects(bridge.handlers.hiroi_page({ page: '2', dpi: '60' }), /描けない|canvas|document/);
+  await assert.rejects(bridge.handlers.hiroi_page({ page: '9' }), /p\.9 は無い/);
+  assert.ok(bridge.DEFS.hiroi_annotate.includes('原点は左上'));
+});
+
 test('hiroi_show: 画面とページを切り替える', async () => {
   const M = fakeMetaOS();
   const { bridge, shown } = ctxWith(M);
