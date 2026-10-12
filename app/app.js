@@ -47,7 +47,12 @@
   const COLORS = { route: '#2563eb', noLength: '#ea580c', select: '#f59e0b', undecided: '#d97706', wire: '#16a34a', cross: '#dc2626', draft: '#2563eb' };
   // 当たりの広さ（画面の px。拡大率によらない）
   const PX = { node: 11, seg: 10, border: 9, snap: 12, box: 5, handle: 10 };
-  const SCALES = [2, 4, 6];
+  // 図面の描画は 2 層（T-0647。以前は 2 → 4 → 6 px/pt とページ全体を描き直していて、A3 で 36 MP の canvas を CSS で変形するたびに重かった）:
+  //   土台  ページ全体を BASE_SCALE px/pt で 1 回だけ（面積は BASE_MAX_PX まで）。縮小表示と、拡大中のつなぎ
+  //   詳細  操作が止まったら、見えている範囲だけを いまの倍率 × devicePixelRatio で描く（面積は画面ぶん）。拡大・移動の間は前回の詳細を CSS で動かし、止まったら描き直す
+  const BASE_SCALE = 2;
+  const BASE_MAX_PX = 6e6;
+  const HI_SETTLE_MS = 180;
 
   // 浮かせた要素の上の出来事を、図面に渡さない
   function shield(el) {
@@ -84,6 +89,7 @@
     pdf: null,
     pdfPages: new Map(),
     renderScale: 0,
+    hi: null, // 詳細層の描いたときの見え方 { scale, tx, ty, x0, y0, serial }
     serial: 0,
     collapsed: new Set(),
     query: '',
@@ -93,6 +99,9 @@
   const stage = $('#stage');
   const stack = $('#stack');
   const pdfCanvas = $('#pdf');
+  const hiCanvas = document.createElement('canvas');
+  hiCanvas.id = 'pdfhi';
+  stack.after(hiCanvas);
   const over = $('#over');
   const floatsEl = $('#floats');
 
@@ -339,7 +348,9 @@
     else fit();
     pdfCanvas.width = 1;
     pdfCanvas.height = 1;
-    renderPdf(SCALES[0], app.serial).then(() => refine());
+    app.hi = null;
+    hiCanvas.style.display = 'none';
+    renderPdf(BASE_SCALE, app.serial).then(() => refine());
     renderAll();
   }
 
@@ -351,6 +362,7 @@
   function applyView() {
     const k = app.renderScale ? app.view.scale / app.renderScale : app.view.scale;
     stack.style.transform = `translate(${app.view.tx}px,${app.view.ty}px) scale(${k})`;
+    placeHi();
     $('#zoom').textContent = Math.round((app.view.scale / (96 / 72)) * 100) + '%';
     placeFloats();
     drawOverlay();
@@ -410,11 +422,75 @@
   function refine() {
     clearTimeout(refineTimer);
     refineTimer = setTimeout(() => {
+      if (!app.renderScale) renderPdf(BASE_SCALE, app.serial);
       const need = app.view.scale * (window.devicePixelRatio || 1);
-      let want = SCALES[0];
-      for (const s of SCALES) if (need > want * 1.15) want = s;
-      if (want > app.renderScale) renderPdf(want, app.serial);
-    }, 260);
+      if (need > app.renderScale * 1.15) renderHi(app.serial);
+      else {
+        app.hi = null;
+        hiCanvas.style.display = 'none';
+      }
+    }, HI_SETTLE_MS);
+  }
+  // 詳細層を、いまの見え方に合わせて置く（描いたときの倍率との比で CSS 変形。描き直すまでのつなぎ）
+  function placeHi() {
+    const H = app.hi;
+    if (!H || H.serial !== app.serial) {
+      hiCanvas.style.display = 'none';
+      return;
+    }
+    const r = app.view.scale / H.scale;
+    if (r < 0.45 || r > 3) {
+      hiCanvas.style.display = 'none';
+      return;
+    }
+    hiCanvas.style.display = 'block';
+    hiCanvas.style.transform = `translate(${app.view.tx + H.x0 * app.view.scale}px,${app.view.ty + H.y0 * app.view.scale}px) scale(${r})`;
+  }
+  let hiRendering = null;
+  async function renderHi(serial) {
+    const pg = page();
+    const p = pg && app.pdfPages.get(pg.index);
+    if (!p) return;
+    if (hiRendering) {
+      hiRendering.stale = true;
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const v = viewSize();
+    const { scale, tx, ty } = app.view;
+    const x0 = Math.max(0, -tx / scale);
+    const y0 = Math.max(0, -ty / scale);
+    const x1 = Math.min(pg.width, (v.w - tx) / scale);
+    const y1 = Math.min(pg.height, (v.h - ty) / scale);
+    if (x1 - x0 < 1 || y1 - y0 < 1) return;
+    const sc = scale * dpr;
+    const w = Math.max(1, Math.round((x1 - x0) * sc));
+    const hgt = Math.max(1, Math.round((y1 - y0) * sc));
+    const job = { stale: false };
+    hiRendering = job;
+    try {
+      const off = document.createElement('canvas');
+      off.width = w;
+      off.height = hgt;
+      const g = off.getContext('2d', { alpha: false });
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, w, hgt);
+      await p.render({ canvasContext: g, viewport: p.getViewport({ scale: sc }), transform: [1, 0, 0, 1, -x0 * sc, -y0 * sc] }).promise;
+      if (serial !== app.serial) return;
+      hiCanvas.width = w;
+      hiCanvas.height = hgt;
+      hiCanvas.style.width = w / dpr + 'px';
+      hiCanvas.style.height = hgt / dpr + 'px';
+      hiCanvas.getContext('2d').drawImage(off, 0, 0);
+      app.hi = { scale, tx, ty, x0, y0, serial };
+      placeHi();
+    } catch (e) {
+      console.warn('[hi]', e);
+    } finally {
+      hiRendering = null;
+    }
+    // 描いている間に見え方が動いていたら、もう一度
+    if (job.stale || app.view.scale !== scale || app.view.tx !== tx || app.view.ty !== ty) refine();
   }
 
   let rendering = null;
@@ -423,7 +499,7 @@
     const p = pg && app.pdfPages.get(pg.index);
     if (!p) return;
     let sc = scale;
-    if (pg.width * pg.height * sc * sc > 40e6) sc = Math.sqrt(40e6 / (pg.width * pg.height));
+    if (pg.width * pg.height * sc * sc > BASE_MAX_PX) sc = Math.sqrt(BASE_MAX_PX / (pg.width * pg.height));
     if (sc <= app.renderScale) return;
     if (rendering) await rendering;
     if (serial !== app.serial) return;
@@ -462,6 +538,7 @@
     over.style.width = v.w + 'px';
     over.style.height = v.h + 'px';
     drawOverlay();
+    refine();
   }
 
   /* ---- 浮かせる要素 ---- */
