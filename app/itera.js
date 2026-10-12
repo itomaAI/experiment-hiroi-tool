@@ -197,6 +197,49 @@
       await writeBinary(path, img.blob);
       return path + ' (' + img.w + '×' + img.h + ', ' + Math.round(img.blob.size / 1024) + ' KB)';
     }
+    /*
+     * 「AI に頼む」の下ごしらえ（T-0647）: 送るページの縮小画像と注釈の切り抜きを一括で描いて、
+     * 頼みごとのディレクトリ（shots/ask-<日時>/）に置く。AI は read_file で読むだけ（hiroi_page / hiroi_crop を 1 枚ずつ呼ばない）。
+     * pl は A.plan の戻り。hooks.phase(文) で進みを知らせ、hooks.cancelled() が真なら途中で止める。
+     * 戻り: { dir, pages: [{ page, path, w, h, kb, k, title }], crops: [{ annotation, page, kind, title, note, allPages, paths: [{ path, w, h, kb }] }] }
+     */
+    async function exportPlan(pl, hooks) {
+      const H = Object.assign({ phase: () => {}, cancelled: () => false, pageDpi: 60 }, hooks || {});
+      const d = new Date();
+      const z = (n) => String(n).padStart(2, '0');
+      const dir = SHOTS + '/ask-' + d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()) + '-' + z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds());
+      await ensureDirs();
+      if (!(await M.fs.exists(dir))) await M.fs.mkdir(dir);
+      const put = async (name, img) => {
+        const path = dir + '/' + name;
+        await M.fs.write(path, img.blob, { overwrite: true });
+        return { path, w: img.w, h: img.h, kb: Math.round(img.blob.size / 1024) };
+      };
+      const pages = [];
+      for (let i = 0; i < pl.pages.length; i++) {
+        if (H.cancelled()) throw new Error('cancelled');
+        const n = pl.pages[i];
+        H.phase('ページを描いています（' + (i + 1) + ' / ' + pl.pages.length + '）');
+        const pg = pageByNumber(n);
+        const img = await renderRect(n, [0, 0, pg.width, pg.height], H.pageDpi / 72);
+        pages.push(Object.assign({ page: n, k: SM.round(72 / H.pageDpi, 4), title: pg.title || '' }, await put('p' + String(n).padStart(3, '0') + '.png', img)));
+      }
+      const crops = [];
+      const total = pl.crops.reduce((s, c) => s + c.tiles.length, 0);
+      let done = 0;
+      for (const c of pl.crops) {
+        const paths = [];
+        for (let i = 0; i < c.tiles.length; i++) {
+          if (H.cancelled()) throw new Error('cancelled');
+          done++;
+          H.phase('切り抜きを描いています（' + done + ' / ' + total + '）');
+          const img = await renderRect(c.page, c.tiles[i], c.scale);
+          paths.push(await put(c.annotation + '_p' + String(c.page).padStart(3, '0') + (c.tiles.length > 1 ? '_' + (i + 1) : '') + '.png', img));
+        }
+        crops.push({ annotation: c.annotation, page: c.page, kind: c.kind, title: c.title, note: c.note, allPages: c.allPages, paths });
+      }
+      return { dir, pages, crops };
+    }
 
     /* ======================================================================
      * 文字にする（AI へ返すもの）
@@ -560,6 +603,6 @@ Note: 手本が無ければ search は探せない —— まず利用者に箱�
       });
     }
 
-    return { saveJob, flush, loadJob, savePdf, loadPdf, loadModel, reset, openVfsPdf, afterBoot, registerTools, handlers, DEFS, statusText, paletteText, paths: { BASE, JOB, PDF, PDF_META, SHOTS, MODEL_VFS, MODEL_WEB } };
+    return { saveJob, flush, loadJob, savePdf, loadPdf, loadModel, reset, openVfsPdf, afterBoot, registerTools, handlers, DEFS, statusText, paletteText, exportPlan, paths: { BASE, JOB, PDF, PDF_META, SHOTS, MODEL_VFS, MODEL_WEB } };
   };
 })();

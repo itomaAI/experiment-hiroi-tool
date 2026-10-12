@@ -831,7 +831,7 @@
       body.append(h('div', { class: 'muted' }, (ITERA ? 'AI はページを縮めた画像で見るので、' : 'PDF のページは Gemini の側で縮めて読まれ、') + '細かい字（表の中身・注記）は読めないことが多いので、読ませたい所は注釈で囲んでください。題欄を 1 つ囲んで「全ページ」にすると、ページの題が正しく取れます。'));
       if (ITERA) {
         body.append(h('div', { class: 'an-btns', style: 'margin:10px 0' }, h('button', { class: 'primary big', disabled: pl.pages.length || pl.crops.length ? null : '', onclick: () => askItera() }, 'AI に頼む ▶')));
-        if (st.handed) body.append(h('div', { class: 'an-last ok' }, h('div', {}, h('b', {}, localTime(new Date(st.handed.at).toISOString())), ' に頼んだ（ページ ' + st.handed.pages + '・注釈 ' + st.handed.crops + '）'), h('div', { class: 'muted' }, '進みはチャットで見られます。AI が入れたものはパレットと覚え書きに現れ、元に戻す（Ctrl+Z）で戻せます。')));
+        if (st.handed) body.append(h('div', { class: 'an-last ok' }, h('div', {}, h('b', {}, localTime(new Date(st.handed.at).toISOString())), ' に頼んだ（ページ ' + st.handed.pages + '・注釈 ' + st.handed.crops + (st.handed.images ? '・描いた画像 ' + st.handed.images + ' 枚' : '') + '）'), st.handed.dir ? h('div', { class: 'muted' }, '画像: ' + st.handed.dir + '/') : null, h('div', { class: 'muted' }, '進みはチャットで見られます。AI が入れたものはパレットと覚え書きに現れ、元に戻す（Ctrl+Z）で戻せます。')));
       } else if (st.run) {
         const r = st.run;
         body.append(h('div', { class: 'an-progress' }, h('div', { class: 'spin' }), h('div', {}, h('b', {}, r.phase), h('div', { class: 'muted' }, Math.round((Date.now() - r.t0) / 1000) + ' 秒')), h('span', { class: 'spacer' }), h('button', { class: 'danger', onclick: cancelRun }, 'やめる')));
@@ -890,11 +890,17 @@
       }
       return out;
     }
-    function iteraRequest(pl) {
-      const L = ['拾いツールの図面解析を頼みます（画面の「AI に頼む」から）。まず hiroi_status で状態を見てください。'];
-      if (pl.pages.length) L.push('送るページ: p.' + A.formatPageSpec(pl.pages) + '（' + pl.pages.length + ' ページ）。hiroi_page で見て、ページの欄（題・図面番号・種類・工事・階・縮尺・要約・拾うか）を hiroi_apply の pages に入れてください。');
-      const anns = annotationLines(pl);
-      if (anns.length) L.push('注釈（読みどころ）:', ...anns, '注釈は hiroi_crop で切り抜きを読み、読めた分ずつ hiroi_apply に入れてください（カテゴリ・ラベル・規則・見込み・系統・覚え書き）。読めないものは書かないでください。');
+    const imgText = (p) => p.path + '（' + p.w + '×' + p.h + '）';
+    function iteraRequest(pl, ex) {
+      const L = ['拾いツールの図面解析を頼みます（画面の「AI に頼む」から）。'];
+      if (ex) L.push('画像は描いてあります（' + ex.dir + '/）。read_file で読むだけでよく、hiroi_page / hiroi_crop は要りません。');
+      else L.push('まず hiroi_status で状態を見てください。');
+      if (pl.pages.length) {
+        L.push('送るページ: p.' + A.formatPageSpec(pl.pages) + '（' + pl.pages.length + ' ページ）。' + (ex ? '' : 'hiroi_page で見て、') + 'ページの欄（題・図面番号・種類・工事・階・縮尺・要約・拾うか）を hiroi_apply の pages に入れてください。');
+        if (ex) for (const p of ex.pages) L.push('- p.' + p.page + (p.title ? '「' + p.title + '」' : '') + ' ' + imgText(p) + '（1 px = ' + p.k + ' pt）');
+      }
+      const anns = ex ? ex.crops.map((c) => { const k = A.kind(c.kind); return '- ' + c.annotation + ' p.' + c.page + (c.allPages ? '（送るページ全部の同じ位置）' : '') + ' ' + (k ? k.name : c.kind) + (c.title ? '「' + c.title + '」' : '') + (c.note ? ' — ' + c.note : '') + (k && k.ask ? '。読み方: ' + k.ask : '') + '\n  ' + c.paths.map(imgText).join('\n  '); }) : annotationLines(pl);
+      if (anns.length) L.push('注釈（読みどころ）:', ...anns, (ex ? '切り抜きを読み、' : '注釈は hiroi_crop で切り抜きを読み、') + '読めた分ずつ hiroi_apply に入れてください（カテゴリ・ラベル・規則・見込み・系統・覚え書き）。読めないものは書かないでください。');
       if (store.state.analysis.focus) L.push('今回の範囲・伝えること: ' + store.state.analysis.focus);
       if (opts.withPalette) L.push('先に hiroi_palette でいまのパレットの名前を見て、同じものは同じ名前で書いてください。');
       L.push('終わったら、入れた数を短く報告してください。');
@@ -908,20 +914,35 @@
       const M = self.MetaOS;
       const send = M && M.ai && M.ai.ask ? (t) => M.ai.ask(t) : M && M.chat && M.chat.append ? (t) => M.chat.append('user', t, { wake: true }) : null;
       if (!send) return toast('Itera の AI に頼めない（MetaOS.ai が無い）', 3000);
-      const text = iteraRequest(pl);
+      const bridge = ctx.bridge ? ctx.bridge() : null;
       const ok = await confirmBox('Itera の AI に頼む', h('div', {},
-        h('p', {}, '次の頼みをチャットに送ります。AI は道具で読みどころを読み、少しずつパレットに書きます（器具表 1 枚で数分）。'),
-        h('pre', { class: 'an-pre' }, text),
+        h('p', {}, '送るページの画像（' + pl.pages.length + ' 枚）と注釈の切り抜き（' + pl.images + ' 枚）を先に描いて置き、次の頼みをチャットに送ります。AI は画像を読んで、少しずつパレットに書きます。'),
+        h('pre', { class: 'an-pre' }, iteraRequest(pl)),
         h('p', { class: 'muted' }, '進みはチャットで見られます。入ったものは元に戻す（Ctrl+Z）で戻せます。'),
       ), '送る');
       if (!ok) return;
+      st.rtab = 'run';
+      st.run = { phase: '画像を描いています', t0: Date.now(), cancelled: false };
+      ticker = setInterval(() => { renderBar(); const t = right.querySelector('.an-progress .muted'); if (t && st.run) t.textContent = Math.round((Date.now() - st.run.t0) / 1000) + ' 秒'; }, 1000);
+      renderAll();
+      let text = null;
+      let ex = null;
       try {
+        if (bridge && bridge.exportPlan) ex = await bridge.exportPlan(pl, { phase, cancelled: () => !st.run || st.run.cancelled });
+        text = iteraRequest(pl, ex);
+        phase('チャットに送っています');
         await send(text);
       } catch (e) {
+        const was = st.run;
+        st.run = null;
+        clearInterval(ticker);
+        renderAll();
+        if (was && was.cancelled) return toast('やめた', 2000);
         return toast('頼めなかった: ' + (e && e.message ? e.message : e), 4000);
       }
-      st.handed = { at: Date.now(), pages: pl.pages.length, crops: annotationLines(pl).length };
-      st.rtab = 'run';
+      st.run = null;
+      clearInterval(ticker);
+      st.handed = { at: Date.now(), pages: pl.pages.length, crops: annotationLines(pl).length, images: ex ? ex.pages.length + ex.crops.reduce((s, c) => s + c.paths.length, 0) : 0, dir: ex ? ex.dir : null };
       toast('Itera の AI に頼んだ。チャットで進みを見られます', 3000);
       renderAll();
     }
