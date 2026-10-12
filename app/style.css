@@ -77,6 +77,7 @@ small { font-size: 11px; }
 #stage.panning { cursor: grabbing !important; }
 #stack { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 #pdf { display: block; background: #fff; box-shadow: 0 0 0 1px #cbd5e1, 0 2px 14px rgba(0,0,0,.14); }
+#pdfhi { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; display: none; }
 #over { position: absolute; left: 0; top: 0; pointer-events: none; }
 #floats { position: absolute; inset: 0; pointer-events: none; }
 .float { position: absolute; pointer-events: auto; }

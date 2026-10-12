@@ -201,7 +201,8 @@
      * 「AI に頼む」の下ごしらえ（T-0647）: 送るページの縮小画像と注釈の切り抜きを一括で描いて、
      * 頼みごとのディレクトリ（shots/ask-<日時>/）に置く。AI は read_file で読むだけ（hiroi_page / hiroi_crop を 1 枚ずつ呼ばない）。
      * pl は A.plan の戻り。hooks.phase(文) で進みを知らせ、hooks.cancelled() が真なら途中で止める。
-     * 戻り: { dir, pages: [{ page, path, w, h, kb, k, title }], crops: [{ annotation, page, kind, title, note, allPages, paths: [{ path, w, h, kb }] }] }
+     * ページは hooks.pdfFor([n]) があれば **そのページだけの PDF**（字が読める。縮小画像では表の字が読めなかった）、無ければ・失敗したら縮小画像（PNG）。
+     * 戻り: { dir, pages: [{ page, path, title, width, height, pdf: true } | { page, path, w, h, kb, k, title, pdf: false }], crops: [{ annotation, page, kind, title, note, allPages, paths: [{ path, w, h, kb }] }] }
      */
     async function exportPlan(pl, hooks) {
       const H = Object.assign({ phase: () => {}, cancelled: () => false, pageDpi: 60 }, hooks || {});
@@ -221,8 +222,22 @@
         const n = pl.pages[i];
         H.phase('ページを描いています（' + (i + 1) + ' / ' + pl.pages.length + '）');
         const pg = pageByNumber(n);
-        const img = await renderRect(n, [0, 0, pg.width, pg.height], H.pageDpi / 72);
-        pages.push(Object.assign({ page: n, k: SM.round(72 / H.pageDpi, 4), title: pg.title || '' }, await put('p' + String(n).padStart(3, '0') + '.png', img)));
+        let done = false;
+        if (H.pdfFor) {
+          try {
+            const bytes = await H.pdfFor([n]);
+            const path = dir + '/p' + String(n).padStart(3, '0') + '.pdf';
+            await M.fs.write(path, bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), { overwrite: true });
+            pages.push({ page: n, path, title: pg.title || '', width: pg.width, height: pg.height, kb: Math.round(bytes.length / 1024), pdf: true });
+            done = true;
+          } catch (e) {
+            console.warn('[ask] page pdf failed, falling back to png', e);
+          }
+        }
+        if (!done) {
+          const img = await renderRect(n, [0, 0, pg.width, pg.height], H.pageDpi / 72);
+          pages.push(Object.assign({ page: n, k: SM.round(72 / H.pageDpi, 4), title: pg.title || '', pdf: false }, await put('p' + String(n).padStart(3, '0') + '.png', img)));
+        }
       }
       const crops = [];
       const total = pl.crops.reduce((s, c) => s + c.tiles.length, 0);

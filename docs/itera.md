@@ -39,7 +39,7 @@ GP の特徴抽出器（ONNX・3.7 MB）は、VFS の `data/apps/hiroi-tool/gp_f
 
 ## 図面解析タブの「AI に頼む」
 
-Itera の上では、図面解析タブの「解析する」（単体版では利用者の鍵で Gemini へ直接送る）が **「AI に頼む ▶」** になります。鍵は要りません。押すと、送るページの縮小画像（60 dpi）と注釈の切り抜き（300 dpi。大きければタイル）を **先に一括で描いて** `data/apps/hiroi-tool/current/shots/ask-<日時>/` に置き、そのパスを並べた頼みの文をチャットに送って OS の AI を起こします（`MetaOS.ai.ask`）。AI は画像を `read_file` で読むだけでよく、`hiroi_page` / `hiroi_crop` を 1 枚ずつ呼ばずに済みます。書くのは `hiroi_apply` で、読めた分ずつ。
+Itera の上では、図面解析タブの「解析する」（単体版では利用者の鍵で Gemini へ直接送る）が **「AI に頼む ▶」** になります。鍵は要りません。押すと、送るページを **1 ページずつの PDF** に切り出し（pdf-lib。読めなければ 60 dpi の縮小画像）、注釈の切り抜き（300 dpi。大きければタイル）と合わせて **先に一括で用意して** `data/apps/hiroi-tool/current/shots/ask-<日時>/` に置き、そのパスを並べた頼みの文をチャットに送って OS の AI を起こします（`MetaOS.ai.ask`）。AI はそれらを `read_file` で読むだけでよく、`hiroi_page` / `hiroi_crop` を 1 枚ずつ呼ばずに済みます。書くのは `hiroi_apply` で、読めた分ずつ。
 
 描くのは pdf.js で、`requestAnimationFrame` で刻んで進むため、**タブが裏にある間は止まります**（`hiroi_page` / `hiroi_crop` も同じ）。
 
