@@ -3289,7 +3289,7 @@
     : null;
 
   /* ---- 図面解析の画面（app/analyze.js） ---- */
-  const anScreen = self.SMAnalyzeScreen ? self.SMAnalyzeScreen({ el: $('#an'), store, P, h, $, edit, toast, openModal, confirmBox, app, IDB, ENV, setScreen, renderAll }) : null;
+  const anScreen = self.SMAnalyzeScreen ? self.SMAnalyzeScreen({ el: $('#an'), store, P, h, $, edit, toast, openModal, confirmBox, app, IDB, ENV, setScreen, renderAll, loadPdf: () => (bridge ? bridge.loadPdf() : IDB.get('pdf')) }) : null; // PDF の置き場は Itera の上では VFS（bridge）。bridge は起動のあとに入るので、呼ぶときに見る
 
   // 外から覗く（試験・inject_js 用）
   self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, anScreen: () => anScreen, bridge: () => bridge, detector: () => detector, gp: { search: gpSearch, approve: gpApprove, reject: gpReject, approveAll: gpApproveAll, prepare: gpPrepare }, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
