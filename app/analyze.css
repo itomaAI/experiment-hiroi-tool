@@ -97,3 +97,6 @@
 .pnotes summary { cursor: pointer; font-size: 12px; }
 .pnote { font-size: 12px; margin: 3px 0; line-height: 1.5; }
 .pnote .nk { font-size: 10px; background: #fef3c7; color: #92400e; border-radius: 3px; padding: 0 4px; margin-right: 4px; }
+
+/* Itera の AI に頼む: 送る頼みの文（T-0647） */
+.an-pre { white-space: pre-wrap; max-height: 40vh; overflow: auto; font-size: 12px; line-height: 1.5; background: var(--bg2, #f6f6f6); border: 1px solid var(--line, #ddd); border-radius: 6px; padding: 8px; margin: 6px 0; }

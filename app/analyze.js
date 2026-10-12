@@ -24,6 +24,9 @@
   self.SMAnalyzeScreen = function (ctx) {
     const { el, store, P, h, edit, toast, openModal, confirmBox, app, IDB, ENV } = ctx;
     const A = self.SMA;
+    // Itera の上では、解析は OS の AI（エンジン）に頼む。AI が hiroi_page / hiroi_crop / hiroi_apply で少しずつ書く（T-0647）。
+    // Gemini へ直接送る道（鍵・モデル・考える量）は単体（ブラウザ）のときだけ
+    const ITERA = ENV === 'itera' && !!self.MetaOS;
 
     const st = {
       pageId: null,
@@ -96,7 +99,9 @@
         h('span', { class: 'an-sum', title: '解析に送るもの' }, '送る ', h('b', {}, sendN), ' ページ・注釈 ', h('b', {}, (store.state.annotations || []).length), '（画像 ' + pl.images + ' 枚）'),
         st.run
           ? h('button', { class: 'danger', onclick: () => cancelRun() }, 'やめる（' + Math.round((Date.now() - st.run.t0) / 1000) + ' 秒）')
-          : h('button', { class: 'primary', disabled: sendN || pl.crops.length ? null : '', title: sendN ? 'Gemini に送って、ページの分類とパレットを作る' : '左の一覧で「送る」ページを選んでください', onclick: () => startRun() }, '解析する ▶'),
+          : ITERA
+            ? h('button', { class: 'primary', disabled: sendN || pl.crops.length ? null : '', title: sendN || pl.crops.length ? 'Itera の AI に、送るページと注釈を読んでパレットを作ってもらう' : '左の一覧で「送る」ページを選ぶか、読みどころを囲んでください', onclick: () => askItera() }, 'AI に頼む ▶')
+            : h('button', { class: 'primary', disabled: sendN || pl.crops.length ? null : '', title: sendN ? 'Gemini に送って、ページの分類とパレットを作る' : '左の一覧で「送る」ページを選んでください', onclick: () => startRun() }, '解析する ▶'),
       );
     }
     function setTool(t) {
@@ -799,31 +804,35 @@
           h('ol', {},
             h('li', {}, '左の一覧で、解析に「送る」ページを選ぶ（仕様書・凡例・系統図・機器表のあるページ・拾う平面図など。全部は要らない）'),
             h('li', {}, '読みどころを、上の帯の筆で囲む（器具表・配線表・凡例・注記。題欄を 1 つ囲んで「全ページ」にすると、ページの題が正しく取れる）'),
-            h('li', {}, '「解析する」—— ページの分類・パレット・覚え書きが入る'),
+            h('li', {}, ITERA ? '「AI に頼む」—— Itera の AI が読みどころを読んで、ページの分類・パレット・覚え書きを少しずつ入れる（進みはチャットに出る）' : '「解析する」—— ページの分類・パレット・覚え書きが入る'),
             h('li', {}, '確かめて直す（ページの欄・パレットの画面・覚え書き。左の「未確認」で絞れる）'),
             h('li', {}, '拾いのタブへ。「拾う」のページだけが出る。「参照 ▾」で器具表などを小窓に出して照らし合わせられる'),
           )));
       }
-      body.append(
+      if (!ITERA) body.append(
         h('div', { class: 'sec', style: 'margin-top:0' }, 'Gemini'),
         h('div', { class: 'fld' }, h('span', { class: 'fn' }, '鍵'), h('div', { class: 'an-btns' }, h('span', { class: ks.has ? 'ok' : 'warn' }, ks.where), h('span', { class: 'spacer' }), h('button', { onclick: openKeyModal }, ks.has && !ks.itera ? '変える' : '鍵を入れる'))),
         h('div', { class: 'two' }, h('label', { class: 'fld' }, h('span', { class: 'fn' }, 'モデル'), model, h('datalist', { id: 'an-models' }, h('option', { value: 'gemini-3.8-flash' }), h('option', { value: 'gemini-3.1-pro-preview' }))), h('label', { class: 'fld' }, h('span', { class: 'fn' }, '考える量'), think)),
-        h('div', { class: 'sec' }, '今回の範囲・伝えること'),
       );
+      if (ITERA) body.append(h('div', { class: 'sec', style: 'margin-top:0' }, 'Itera の AI に頼む'), h('div', { class: 'muted' }, '鍵は要りません。この OS の AI が、道具（hiroi_page / hiroi_crop / hiroi_apply）で読みどころを読んで、少しずつパレットに書きます。'));
+      body.append(h('div', { class: 'sec' }, '今回の範囲・伝えること'));
       const focus = h('textarea', { rows: 3, placeholder: '例: 今回は電灯設備と照明器具だけを拾う。幹線は別に拾う。器具表と平面図の部屋名が違うことがある' }, store.state.analysis.focus || '');
       focus.addEventListener('change', () => edit('今回の範囲', (S) => S.setAnalysisFocus(focus.value.trim())));
       body.append(focus, h('div', { class: 'muted' }, '書いておくと、範囲の外の設備はパレットに入りません（作業といっしょに保存されます）'), h('div', { class: 'sec' }, '送るもの'));
       const send = h('div', { class: 'an-send' });
       send.append(
-        h('div', {}, 'PDF: ', pl.pages.length ? h('b', {}, A.formatPageSpec(pl.pages)) : h('span', { class: 'warn' }, 'なし'), pl.pages.length ? '（' + pl.pages.length + ' ページを切り出して送る）' : ''),
+        h('div', {}, 'PDF: ', pl.pages.length ? h('b', {}, A.formatPageSpec(pl.pages)) : h('span', { class: 'warn' }, 'なし'), pl.pages.length ? (ITERA ? '（' + pl.pages.length + ' ページ。AI がページの欄を書く）' : '（' + pl.pages.length + ' ページを切り出して送る）') : ''),
         h('div', {}, '注釈の切り抜き: ', h('b', {}, pl.crops.length), ' 件・画像 ', h('b', {}, pl.images), ' 枚'),
         h('div', {}, 'いまのパレット: ', opts.withPalette ? '名前の一覧を添える（同じものを同じ名前で書いてもらうため）' : '添えない'),
       );
       for (const pr of pl.problems) send.append(h('div', { class: 'warn' }, pr));
       if (pl.pages.length > 20 && !pl.crops.length) send.append(h('div', { class: 'warn' }, 'ページが多く、注釈がありません。PDF だけでは表の細かい字が読めず、応答が長くなって途中で切れることがあります（76 ページ一度で切れた例あり）。読みどころを囲むか、ページを絞ってください'));
       body.append(send, h('label', { class: 'chk' }, checkbox(!!opts.withPalette, (v) => { opts.withPalette = v; saveOpts(); renderRight(); }), 'いまのパレットの名前を添える'));
-      body.append(h('div', { class: 'muted' }, 'PDF のページは Gemini の側で縮めて読まれ、細かい字（表の中身・注記）は読めないことが多いので、読ませたい所は注釈で囲んでください。題欄を 1 つ囲んで「全ページ」にすると、ページの題が正しく取れます。'));
-      if (st.run) {
+      body.append(h('div', { class: 'muted' }, (ITERA ? 'AI はページを縮めた画像で見るので、' : 'PDF のページは Gemini の側で縮めて読まれ、') + '細かい字（表の中身・注記）は読めないことが多いので、読ませたい所は注釈で囲んでください。題欄を 1 つ囲んで「全ページ」にすると、ページの題が正しく取れます。'));
+      if (ITERA) {
+        body.append(h('div', { class: 'an-btns', style: 'margin:10px 0' }, h('button', { class: 'primary big', disabled: pl.pages.length || pl.crops.length ? null : '', onclick: () => askItera() }, 'AI に頼む ▶')));
+        if (st.handed) body.append(h('div', { class: 'an-last ok' }, h('div', {}, h('b', {}, localTime(new Date(st.handed.at).toISOString())), ' に頼んだ（ページ ' + st.handed.pages + '・注釈 ' + st.handed.crops + '）'), h('div', { class: 'muted' }, '進みはチャットで見られます。AI が入れたものはパレットと覚え書きに現れ、元に戻す（Ctrl+Z）で戻せます。')));
+      } else if (st.run) {
         const r = st.run;
         body.append(h('div', { class: 'an-progress' }, h('div', { class: 'spin' }), h('div', {}, h('b', {}, r.phase), h('div', { class: 'muted' }, Math.round((Date.now() - r.t0) / 1000) + ' 秒')), h('span', { class: 'spacer' }), h('button', { class: 'danger', onclick: cancelRun }, 'やめる')));
       } else {
@@ -837,7 +846,7 @@
           body.append(h('div', { class: 'an-run' }, h('div', {}, h('b', {}, localTime(r.at)), ' ', r.model, '・', Math.round(r.ms / 1000) + ' 秒'), h('div', { class: 'muted' }, 'p.' + A.formatPageSpec(r.pages || []) + '・注釈 ' + (r.crops || 0) + '・入力 ' + (r.tokensIn || '?') + '・出力 ' + (r.tokensOut || '?') + ' トークン'), r.sum ? h('div', { class: 'muted' }, sumText(r.sum)) : null));
         }
       }
-      if (st.hasLast) body.append(h('div', { class: 'an-btns', style: 'margin-top:8px' }, h('button', { onclick: reapplyLast, title: 'ブラウザに残してある最後の応答を、もう一度パレットに入れる（足し合わせ。送り直さない）' }, '最後の応答をもう一度入れる')));
+      if (st.hasLast && !ITERA) body.append(h('div', { class: 'an-btns', style: 'margin-top:8px' }, h('button', { onclick: reapplyLast, title: 'ブラウザに残してある最後の応答を、もう一度パレットに入れる（足し合わせ。送り直さない）' }, '最後の応答をもう一度入れる')));
     }
     const localTime = (iso) => { const d = new Date(iso); const z = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) + ' ' + z(d.getHours()) + ':' + z(d.getMinutes()); };
     const sumText = (s) => 'ページ ' + s.pages + '・カテゴリ +' + s.categories.added + '・ラベル +' + s.labels.added + '・規則 ' + s.rules + '・構成 ' + s.components + '・見込み ' + s.expected + '・系統 ' + (s.systems || 0) + '・覚え書き ' + s.notes;
@@ -869,6 +878,53 @@
       if (st.rtab === 'run') renderRight();
     }
     let ticker = null;
+    /* Itera の上: 送るページと注釈を書いた頼みをチャットに置き、OS の AI を起こす。読むのも書くのも AI が道具でする */
+    function annotationLines(pl) {
+      const seen = new Set();
+      const out = [];
+      for (const c of pl.crops) {
+        if (seen.has(c.annotation)) continue;
+        seen.add(c.annotation);
+        const k = A.kind(c.kind);
+        out.push('- ' + c.annotation + ' p.' + c.page + (c.allPages ? '（送るページ全部の同じ位置）' : '') + ' ' + (k ? k.name : c.kind) + (c.title ? '「' + c.title + '」' : '') + (c.note ? ' — ' + c.note : ''));
+      }
+      return out;
+    }
+    function iteraRequest(pl) {
+      const L = ['拾いツールの図面解析を頼みます（画面の「AI に頼む」から）。まず hiroi_status で状態を見てください。'];
+      if (pl.pages.length) L.push('送るページ: p.' + A.formatPageSpec(pl.pages) + '（' + pl.pages.length + ' ページ）。hiroi_page で見て、ページの欄（題・図面番号・種類・工事・階・縮尺・要約・拾うか）を hiroi_apply の pages に入れてください。');
+      const anns = annotationLines(pl);
+      if (anns.length) L.push('注釈（読みどころ）:', ...anns, '注釈は hiroi_crop で切り抜きを読み、読めた分ずつ hiroi_apply に入れてください（カテゴリ・ラベル・規則・見込み・系統・覚え書き）。読めないものは書かないでください。');
+      if (store.state.analysis.focus) L.push('今回の範囲・伝えること: ' + store.state.analysis.focus);
+      if (opts.withPalette) L.push('先に hiroi_palette でいまのパレットの名前を見て、同じものは同じ名前で書いてください。');
+      L.push('終わったら、入れた数を短く報告してください。');
+      return L.join('\n');
+    }
+    async function askItera() {
+      if (!app.pdf) return toast('図面の PDF を開いてください', 2500);
+      ensure();
+      const pl = planNow();
+      if (!pl.pages.length && !pl.crops.length) return toast('送るものがありません', 2500);
+      const M = self.MetaOS;
+      const send = M && M.ai && M.ai.ask ? (t) => M.ai.ask(t) : M && M.chat && M.chat.append ? (t) => M.chat.append('user', t, { wake: true }) : null;
+      if (!send) return toast('Itera の AI に頼めない（MetaOS.ai が無い）', 3000);
+      const text = iteraRequest(pl);
+      const ok = await confirmBox('Itera の AI に頼む', h('div', {},
+        h('p', {}, '次の頼みをチャットに送ります。AI は道具で読みどころを読み、少しずつパレットに書きます（器具表 1 枚で数分）。'),
+        h('pre', { class: 'an-pre' }, text),
+        h('p', { class: 'muted' }, '進みはチャットで見られます。入ったものは元に戻す（Ctrl+Z）で戻せます。'),
+      ), '送る');
+      if (!ok) return;
+      try {
+        await send(text);
+      } catch (e) {
+        return toast('頼めなかった: ' + (e && e.message ? e.message : e), 4000);
+      }
+      st.handed = { at: Date.now(), pages: pl.pages.length, crops: annotationLines(pl).length };
+      st.rtab = 'run';
+      toast('Itera の AI に頼んだ。チャットで進みを見られます', 3000);
+      renderAll();
+    }
     async function startRun() {
       if (st.run) return;
       if (!app.pdf) return toast('図面の PDF を開いてください', 2500);
@@ -998,7 +1054,7 @@
       const L = await loadPdfLib();
       const fp = (store.state.doc || {}).fingerprint || (store.state.doc || {}).name;
       if (!srcDoc || srcDoc.fp !== fp) {
-        const rec = await IDB.get('pdf');
+        const rec = ctx.loadPdf ? await ctx.loadPdf() : await IDB.get('pdf'); // Itera の上では VFS（IDB には無い）
         if (!rec || !rec.bytes) throw new Error('PDF がブラウザに残っていません。図面を開き直してください');
         srcDoc = { fp, doc: await L.PDFDocument.load(rec.bytes.slice(0), { ignoreEncryption: true, updateMetadata: false }) };
       }
