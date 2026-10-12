@@ -71,7 +71,8 @@
   const P = () => store.palette;
 
   const app = {
-    gp: { threshold: 0.5, auto: true }, // GP の提案（T-0646）: 見せる閾値・箱を置いたら自動で探す
+    gp: { threshold: 0.5, auto: true, recompute: true }, // GP の提案（T-0646）: 見せる閾値・箱を置いたら自動で探す・決めるたびに探し直す（T-0647）
+    gpBtns: new Map(), // 提案の上の小さな ✓ × （提案の id → 要素）
     pageId: null,
     view: { scale: 1, tx: 0, ty: 0 },
     views: new Map(),
@@ -147,7 +148,7 @@
 
   async function boot() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
-    if (ENV === 'itera' && self.SMIteraBridge) bridge = self.SMIteraBridge({ store, edit, app, toast, setScreen, setPage, attachPdf, confirmBox, P, renderAll: () => renderAll(), gp: { detector: () => detector, search: (c, pg, o) => gpSearch(c, pg, o), approveAll: (pg, c) => gpApproveAll(pg, c), rejectAll: (pg, c) => gpRejectAll(pg, c), approve: (id) => gpApprove(id), reject: (id) => gpReject(id) } });
+    if (ENV === 'itera' && self.SMIteraBridge) bridge = self.SMIteraBridge({ store, edit, app, toast, setScreen, setPage, attachPdf, confirmBox, P, renderAll: () => renderAll(), gp: { detector: () => detector, search: (c, pg, o) => gpSearch(c, pg, o), approveAll: (pg, c) => gpApproveAll(pg, c), rejectAll: (pg, c) => gpRejectAll(pg, c), approve: (id) => gpApprove(id, { stay: true }), reject: (id) => gpReject(id, { stay: true }), reset: (c) => gpReset(c) } });
     const saved = bridge ? await bridge.loadJob() : load();
     if (saved) store.replace(SMA.ensure(saved));
     store.onChange(onStoreChange);
@@ -675,6 +676,7 @@
   };
 
   function drawOverlay() {
+    renderGpButtons();
     const dpr = window.devicePixelRatio || 1;
     const g = over.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -846,7 +848,7 @@
     if (lay.pickup) {
       // GP の提案（T-0646）: 点線の箱と点数。承認で拾いになる
       for (const pr of store.proposalsOn(pg.id)) {
-        if (pr.score < app.gp.threshold) continue;
+        if (!gpShows(pr)) continue;
         const sel = isSel('proposal', pr.id);
         const color = catColor(pr.category);
         const [sx, sy] = toScreen(pr.bbox[0], pr.bbox[1]);
@@ -965,7 +967,7 @@
     }
     if (lay.pickup) {
       for (const pr of store.proposalsOn(pg.id)) {
-        if (pr.score < app.gp.threshold) continue;
+        if (!gpShows(pr)) continue;
         const t = tol(PX.box);
         if (x >= pr.bbox[0] - t && x <= pr.bbox[0] + pr.bbox[2] + t && y >= pr.bbox[1] - t && y <= pr.bbox[1] + pr.bbox[3] + t) out.push({ kind: 'proposal', id: pr.id, how: 'proposal' });
       }
@@ -3245,33 +3247,96 @@
    * ====================================================================== */
   const detector = self.SMDetector && self.SMGP ? self.SMDetector({ store, P, app, IDB, toast, modelUrl: self.HIROI_MODEL_URL, loadModel: () => (bridge && bridge.loadModel ? bridge.loadModel() : null) }) : null; // bridge は起動のあとに入るので、呼ぶときに見る
   if (detector) detector.onChange(() => renderPanel());
-  const gpNextId = () => { const pg = page(); if (!pg) return null; const list = store.proposalsOn(pg.id).filter((p) => p.score >= app.gp.threshold).sort((a, b) => b.score - a.score); return list.length ? list[0].id : null; };
+  // 提案は、右の木で選んでいるカテゴリ（とその下）のものだけを見せる（T-0647。前は全カテゴリを一度に出し、「承認」も全部に効いた）
+  function gpInScope(pr) {
+    const c = app.currentCategory;
+    if (!c || c === 'cat-root') return false;
+    return pr.category === c || P().categoryAncestors(pr.category).includes(c);
+  }
+  const gpShows = (pr) => pr.score >= app.gp.threshold && gpInScope(pr);
+  const gpNextId = () => { const pg = page(); if (!pg) return null; const list = store.proposalsOn(pg.id).filter(gpShows).sort((a, b) => b.score - a.score); return list.length ? list[0].id : null; };
+  // 決めた（承認・退けた）あと、そのカテゴリの提案を同じ編集の中で探し直す（承認した箱は手本に、退けた場所は負例になる）。戻り: 探し直したか
+  function gpRefresh(S, category, pageId) {
+    if (!detector || !app.gp.recompute) return false;
+    if (detector.status(pageId).status !== 'ready') return false;
+    const r = detector.propose(category, [pageId], { threshold: 0.3, max: 300 });
+    if (!r.model) return false;
+    S.replaceProposals(category, pageId, r.byPage.get(pageId) || [], new Date().toISOString());
+    return true;
+  }
+  // 提案の上の小さな ✓ ×（DOM。箱の右上の外に出す。画面で箱が小さいときは出さない）
+  const gpBtnsEl = h('div', { id: 'gpbtns' });
+  floatsEl.before(gpBtnsEl);
+  function renderGpButtons() {
+    const pg = page();
+    const want = new Map();
+    if (pg && detector && app.screen === 'pick' && app.layers.pickup) for (const pr of store.proposalsOn(pg.id)) if (gpShows(pr)) want.set(pr.id, pr);
+    for (const [id, el] of app.gpBtns) if (!want.has(id)) { el.remove(); app.gpBtns.delete(id); }
+    for (const [id, pr] of want) {
+      let el = app.gpBtns.get(id);
+      if (!el) {
+        const stop = (e) => { e.stopPropagation(); e.preventDefault(); };
+        el = h('div', { class: 'gpb', onpointerdown: stop, onpointerup: stop, oncontextmenu: stop, onwheel: (e) => e.stopPropagation() },
+          h('button', { class: 'ok', title: '承認（この提案を箱にする）', onclick: (e) => { stop(e); gpApprove(id, { stay: true }); } }, '✓'),
+          h('button', { class: 'ng', title: '退ける（この場所は負例になる）', onclick: (e) => { stop(e); gpReject(id, { stay: true }); } }, '×'));
+        gpBtnsEl.append(el);
+        app.gpBtns.set(id, el);
+      }
+      const small = Math.min(pr.bbox[2], pr.bbox[3]) * app.view.scale < 14; // 画面で 14 px 未満の箱には出さない（記号は 8 pt ほどなので、200% 前後から出る）
+      el.style.display = small ? 'none' : '';
+      el.classList.toggle('on', isSel('proposal', id));
+      const [sx, sy] = toScreen(pr.bbox[0] + pr.bbox[2], pr.bbox[1]);
+      el.style.left = Math.round(sx) + 'px';
+      el.style.top = Math.round(sy) + 'px';
+    }
+  }
   function gpSelectNext() {
     const id = gpNextId();
     app.selection = id ? { kind: 'proposal', id } : null;
     if (id) showPlace(store.proposal(id));
     renderAll();
   }
-  function gpApprove(id) {
+  function gpApprove(id, o) {
     const pr = store.proposal(id);
     if (!pr) return;
-    const boxId = edit('提案を承認', (S) => S.approveProposal(id));
-    if (boxId) gpSelectNext();
+    const { category, page: pageId } = pr;
+    const boxId = edit('提案を承認', (S) => { const b = S.approveProposal(id); if (b) gpRefresh(S, category, pageId); return b; });
+    if (!boxId) return;
+    if (o && o.stay) { app.selection = null; renderAll(); } else gpSelectNext();
   }
-  function gpReject(id) {
-    if (!store.proposal(id)) return;
-    edit('提案を退ける', (S) => S.rejectProposal(id));
-    gpSelectNext();
+  function gpReject(id, o) {
+    const pr = store.proposal(id);
+    if (!pr) return;
+    const { category, page: pageId } = pr;
+    edit('提案を退ける', (S) => { S.rejectProposal(id); gpRefresh(S, category, pageId); });
+    if (o && o.stay) { app.selection = null; renderAll(); } else gpSelectNext();
+  }
+  // そのカテゴリの GP をやり直す: 提案と退けた場所を消す（承認した箱は拾いなので残す）
+  function gpReset(category) {
+    const pal = P();
+    const name = (pal.category(category) || {}).name || category;
+    const subtree = (c) => c === category || pal.categoryAncestors(c).includes(category);
+    const nP = store.state.proposals.filter((p) => subtree(p.category)).length;
+    const nR = store.state.rejections.filter((r) => subtree(r.category)).length;
+    if (!nP && !nR) return toast('「' + name + '」の提案も退けた場所も無い', 2500);
+    edit('GP をリセット（' + name + '）', (S) => {
+      for (const c of [...new Set([...S.state.proposals.map((p) => p.category), ...S.state.rejections.map((r) => r.category)])]) if (subtree(c)) { S.clearProposals(c); S.removeRejections(null, c); }
+    });
+    app.selection = null;
+    renderAll();
+    toast('「' + name + '」の提案 ' + nP + '・退けた場所 ' + nR + ' を消した（承認した箱は残る）', 3000);
   }
   function gpApproveAll(pageId, category) {
-    const list = store.proposalsOn(pageId).filter((p) => p.score >= app.gp.threshold && (!category || p.category === category));
+    const inCat = (p) => !category || p.category === category || P().categoryAncestors(p.category).includes(category);
+    const list = store.proposalsOn(pageId).filter((p) => p.score >= app.gp.threshold && inCat(p));
     if (!list.length) return;
     edit('提案をまとめて承認（' + list.length + '）', (S) => { for (const p of list) S.approveProposal(p.id); });
     app.selection = null;
     renderAll();
   }
   function gpRejectAll(pageId, category) {
-    const list = store.proposalsOn(pageId).filter((p) => !category || p.category === category);
+    const inCat = (p) => !category || p.category === category || P().categoryAncestors(p.category).includes(category);
+    const list = store.proposalsOn(pageId).filter(inCat);
     if (!list.length) return;
     edit('提案を全部退ける（' + list.length + '）', (S) => { for (const p of list) S.rejectProposal(p.id); });
     app.selection = null;
@@ -3315,8 +3380,10 @@
     const st = detector.status(pg.id);
     const cat = app.currentCategory;
     const catName = cat === 'cat-root' ? null : (pal.category(cat) || {}).name;
-    const here = store.proposalsOn(pg.id);
-    const shown = here.filter((p) => p.score >= app.gp.threshold);
+    const all = store.proposalsOn(pg.id);
+    const here = all.filter(gpInScope);
+    const other = all.filter((p) => !gpInScope(p));
+    const shown = here.filter(gpShows);
     const exemplars = cat !== 'cat-root' ? store.state.pickups.filter((p) => p.kind === 'box' && (p.category === cat || pal.categoryAncestors(p.category).includes(cat))).length : 0;
     const box = h('details', { class: 'sec gp', open: here.length || st.status === 'working' ? '' : null }, h('summary', {}, h('b', {}, '提案（GP）'), shown.length ? h('span', { class: 'dim' }, '　' + shown.length) : null));
     const line = (t) => h('div', { class: 'muted', style: 'margin:4px 0' }, t);
@@ -3327,13 +3394,15 @@
       box.append(line('特徴量あり（' + (st.ms ? Math.round(st.ms / 100) / 10 + ' 秒' + (detector.envText && detector.envText() ? '・' + detector.envText() : '') : '保存から') + '）。' + (catName ? '「' + catName + '」の手本 ' + exemplars : '右の木でカテゴリを選ぶ')));
       box.append(h('div', { class: 'acts' }, h('button', { class: 'primary', disabled: cat === 'cat-root' || !exemplars ? '' : null, onclick: () => { gpSearch(cat, pg.id); renderAll(); } }, '探す'), h('label', { class: 'muted' }, '閾値 ', h('input', { type: 'range', min: 0.3, max: 0.95, step: 0.05, value: app.gp.threshold, style: 'width:90px;vertical-align:middle', oninput: (e) => { app.gp.threshold = Number(e.target.value); renderAll(); } }), ' ' + Math.round(app.gp.threshold * 100) + '%'), h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: app.gp.auto ? '' : null, onchange: (e) => { app.gp.auto = e.target.checked; } }), ' 箱を置いたら探す')));
     }
+    if (st.status === 'ready') box.append(h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: app.gp.recompute ? '' : null, onchange: (e) => { app.gp.recompute = e.target.checked; } }), ' 決めるたびに探し直す'));
     if (here.length) {
       const byCat = {};
       for (const p of shown) byCat[p.category] = (byCat[p.category] || 0) + 1;
       box.append(h('div', { style: 'margin:6px 0' }, Object.entries(byCat).map(([c, n]) => h('span', { class: 'lchip', style: 'background:' + catColor(c) }, ((pal.category(c) || {}).name || c) + ' ' + n))));
-      box.append(h('div', { class: 'acts' }, h('button', { class: 'primary', onclick: () => gpApproveAll(pg.id, null) }, '見えている提案を承認（' + shown.length + '）'), h('button', { onclick: gpSelectNext }, '次の提案へ'), h('button', { class: 'danger', onclick: () => gpRejectAll(pg.id, null) }, '全部退ける')));
-      box.append(line('提案を押して Enter で承認・Delete で退ける。退けた場所は次から負例になる'));
-    }
+      box.append(h('div', { class: 'acts' }, h('button', { class: 'primary', disabled: shown.length ? null : '', onclick: () => gpApproveAll(pg.id, cat) }, '「' + catName + '」の提案を承認（' + shown.length + '）'), h('button', { onclick: gpSelectNext }, '次の提案へ'), h('button', { class: 'danger', disabled: shown.length ? null : '', onclick: () => gpRejectAll(pg.id, cat) }, '全部退ける')));
+      box.append(line('箱の右上の ✓ × で 1 つずつ決める（決めるたびに残りを探し直す）。提案を押して Enter で承認・Delete で退ける。退けた場所は次から負例になる'));
+    } else if (st.status === 'ready' && catName && other.length) box.append(line('他のカテゴリの提案が ' + other.length + '（右の木でそのカテゴリを選ぶと見える）'));
+    if (catName && (here.length || store.state.rejections.some((r) => r.category === cat || pal.categoryAncestors(r.category).includes(cat)))) box.append(h('div', { class: 'acts' }, h('button', { onclick: () => gpReset(cat), title: 'このカテゴリの提案と退けた場所を消す。承認した箱は残る' }, '「' + catName + '」の GP をリセット')));
     return box;
   }
   function detailProposal(pal, pr) {
@@ -3369,7 +3438,7 @@
   const anScreen = self.SMAnalyzeScreen ? self.SMAnalyzeScreen({ el: $('#an'), store, P, h, $, edit, toast, openModal, confirmBox, app, IDB, ENV, setScreen, renderAll, loadPdf: () => (bridge ? bridge.loadPdf() : IDB.get('pdf')), bridge: () => bridge }) : null; // PDF の置き場は Itera の上では VFS（bridge）。bridge は起動のあとに入るので、呼ぶときに見る
 
   // 外から覗く（試験・inject_js 用）
-  self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, anScreen: () => anScreen, bridge: () => bridge, detector: () => detector, gp: { search: gpSearch, approve: gpApprove, reject: gpReject, approveAll: gpApproveAll, prepare: gpPrepare }, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
+  self.__min = { app, store, SM, get palette() { return P(); }, setTool, setPage, setScreen, fit, showPlace, toPage, toScreen, renderAll, openLayerModal, attachPdf, loadSamplePalette, placeSample, palScreen: () => palScreen, anScreen: () => anScreen, bridge: () => bridge, detector: () => detector, gp: { search: gpSearch, approve: gpApprove, reject: gpReject, approveAll: gpApproveAll, rejectAll: gpRejectAll, reset: gpReset, prepare: gpPrepare, inScope: gpInScope }, view: (scale, tx, ty) => { app.view = { scale, tx, ty }; applyView(); refine(); }, tool: () => curTool };
 
   boot();
 })();
