@@ -91,7 +91,9 @@ const made = await page.evaluate(([K1, K2, LK]) => new Promise((resolve, reject)
   const ink = new Uint8Array(HW);
   const unit = (k) => { const v = new Float32Array(C); v[k % C] = 0.9; v[(k * 3) % C] += 0.3; v[(k * 7 + 1) % C] += 0.2; const n = Math.hypot(...v); return v.map((x) => x / n); };
   const mix = (a, b, t) => { const v = new Float32Array(C); for (let k = 0; k < C; k++) v[k] = a[k] * (1 - t) + b[k] * t; const n = Math.hypot(...v); return v.map((x) => x / n); };
-  const put = ([col, row], kind) => { const u = typeof kind === 'number' ? unit(kind) : kind; for (const [dc, dr] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const cell = (row + dr) * fw + col + dc; ink[cell] = 1; for (let k = 0; k < C; k++) z[k * HW + cell] = u[k] + (Math.random() - 0.5) * 0.02; } };
+  let seed = 20261012; // 作り物の揺らぎは決めた種で（Math.random だと回によって似た記号の点数が 85% をまたぎ、試験が揺れた）
+  const rnd = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+  const put = ([col, row], kind) => { const u = typeof kind === 'number' ? unit(kind) : kind; for (const [dc, dr] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const cell = (row + dr) * fw + col + dc; ink[cell] = 1; for (let k = 0; k < C; k++) z[k * HW + cell] = u[k] + (rnd() - 0.5) * 0.02; } };
   for (const p of K1) put(p, 1);
   for (const p of K2) put(p, 2);
   for (const p of LK) put(p, mix(unit(1), unit(3), 0.2));
@@ -144,7 +146,8 @@ await page.evaluate((id) => { self.__min.setTool('select'); self.__min.app.selec
 await page.keyboard.press('Enter');
 await page.waitForTimeout(200);
 s = await S();
-ok(s.boxes === 2 && s.gp === 1 && s.props === TRUE.length + LOOK.length - 1, 'Enter で承認 → by: gp の箱が 1 つ・提案が 1 つ減る', s);
+ok(s.boxes === 2 && s.gp === 1 && s.props === TRUE.length + LOOK.length - 1, 'Enter で承認 → by: gp の箱が 1 つ・提案が 1 つ減る（決めるたびに探し直す。承認した場所は出ない）', s);
+props = await propsOn(); // 探し直したので id が変わっている
 const gpBox = await page.evaluate(() => { const st = self.__min.store.state; const b = st.pickups.find((p) => p.by === 'gp'); return b && { by: b.by, score: b.score, category: b.category, state: b.state }; });
 ok(gpBox && gpBox.by === 'gp' && typeof gpBox.score === 'number', '承認した箱に by と score が付く', gpBox);
 ok(await page.evaluate(() => self.__min.app.selection && self.__min.app.selection.kind === 'proposal'), '承認のあと次の提案が選ばれている');
@@ -154,16 +157,29 @@ await page.evaluate((id) => { self.__min.app.selection = { kind: 'proposal', id 
 await page.keyboard.press('Delete');
 await page.waitForTimeout(200);
 s = await S();
-ok(s.rej === 1 && s.props === TRUE.length + LOOK.length - 2, 'Delete で退ける → 退けた場所 1・提案が 1 つだけ減る', s);
+ok(s.rej === 1 && s.props === TRUE.length - 1, 'Delete で退ける → 退けた場所 1。探し直しで、退けた似た記号が負例になり もう 1 つの似た記号も消える', s);
+props = await propsOn();
+ok(props.every(isTrue) && props.every((p) => p.score >= 0.75), '残った提案は同じ向きだけ（負例が増えた分、点は少し下がる）', props.map((p) => [p.bbox, p.score]));
 
-// 7. 探し直す → 退けた場所と箱のある場所は出ない。まとめて承認 → 提案 0
-await page.evaluate(() => { self.__min.app.selection = null; const pal = self.__min.palette; self.__min.gp.search(pal.categories.find((c) => c.name === 'A').id, 'pg-001'); self.__min.renderAll(); });
+// 7. 箱の上の小さな ✓ ×（T-0647）: 見えている提案の数だけ並ぶ。✓ を押すと承認（選択は動かない）。× を押すと退ける
+await page.evaluate(() => { self.__min.app.selection = null; self.__min.renderAll(); });
+await page.waitForTimeout(100);
+let btns = await page.evaluate(() => document.querySelectorAll('#gpbtns .gpb').length);
+ok(btns === TRUE.length - 1, '提案の上に ✓ × が、見えている提案の数だけ並ぶ', btns);
+await page.evaluate(() => document.querySelector('#gpbtns .gpb button.ok').click());
 await page.waitForTimeout(200);
 s = await S();
-ok(s.props === TRUE.length - 1, '探し直す → 退けた似た記号が負例になり、もう 1 つの似た記号も消える。承認した箱の場所も出ない', s);
-props = await propsOn();
-ok(props.every(isTrue) && props.every((p) => p.score >= 0.85), '残った提案は同じ向きだけ', props.map((p) => [p.bbox, p.score]));
-await page.evaluate(() => self.__min.gp.approveAll('pg-001', null));
+ok(s.gp === 2 && s.props === TRUE.length - 2 && !(await page.evaluate(() => self.__min.app.selection)), '✓ で承認 → gp の箱 2・提案が 1 つ減る・選択は動かない', s);
+// 別のカテゴリを選ぶと、A の提案は見えない（✓ × も出ない）
+await page.evaluate(() => { const pal = self.__min.palette; self.__min.app.currentCategory = pal.categories.find((c) => c.name === 'B').id; self.__min.renderAll(); });
+await page.waitForTimeout(100);
+btns = await page.evaluate(() => document.querySelectorAll('#gpbtns .gpb').length);
+const shownB = await page.evaluate(() => self.__min.store.proposalsOn('pg-001').filter((p) => self.__min.gp.inScope(p)).length);
+ok(btns === 0 && shownB === 0 && (await S()).props === TRUE.length - 2, '別のカテゴリを選ぶと A の提案は見えない（データは残る）', { btns, shownB });
+await page.evaluate(() => { const pal = self.__min.palette; self.__min.app.currentCategory = pal.categories.find((c) => c.name === 'A').id; self.__min.renderAll(); });
+await page.waitForTimeout(100);
+// まとめて承認（選んでいるカテゴリ）→ 提案 0
+await page.evaluate(() => { const pal = self.__min.palette; self.__min.gp.approveAll('pg-001', pal.categories.find((c) => c.name === 'A').id); });
 await page.waitForTimeout(200);
 s = await S();
 ok(s.props === 0 && s.boxes === KIND1.length && s.gp === KIND1.length - 1, 'まとめて承認 → 提案 0・箱 ' + KIND1.length + '（gp ' + (KIND1.length - 1) + '）', s);
@@ -181,6 +197,20 @@ await page.waitForTimeout(200);
 await page.waitForTimeout(400);
 props = await propsOn();
 ok(props.length === KIND2.length - 1 && props.every((p) => KIND2.slice(1).some((cr) => near(p.bbox, cr))), 'B を 1 つ囲う → B の残り ' + (KIND2.length - 1) + ' だけ提案（A の箱は負例）', props.map((p) => [p.bbox, p.score]));
+
+// 8b. リセット: そのカテゴリの提案と退けた場所が消え、承認した箱は残る → 元に戻すで戻る
+await page.evaluate(() => { const pal = self.__min.palette; self.__min.gp.reset(pal.categories.find((c) => c.name === 'B').id); });
+await page.waitForTimeout(200);
+s = await S();
+ok(s.props === 0 && s.rej === 1 && s.boxes === KIND1.length + 1, 'B の GP をリセット → B の提案 0（A の退けた場所と箱は残る）', s);
+await page.evaluate(() => { const pal = self.__min.palette; self.__min.gp.reset(pal.categories.find((c) => c.name === 'A').id); });
+await page.waitForTimeout(200);
+s = await S();
+ok(s.rej === 0 && s.boxes === KIND1.length + 1, 'A の GP をリセット → 退けた場所 0・承認した箱は残る', s);
+await page.evaluate(() => { self.__min.store.undo(); self.__min.store.undo(); });
+await page.waitForTimeout(200);
+s = await S();
+ok(s.props === KIND2.length - 1 && s.rej === 1, '元に戻す ×2 → 提案と退けた場所が戻る', s);
 
 // 9. 読み直しても残る（提案・退けた場所は localStorage、特徴量は IndexedDB）
 await page.reload();

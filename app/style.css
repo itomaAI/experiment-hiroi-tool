@@ -81,6 +81,13 @@ small { font-size: 11px; }
 #over { position: absolute; left: 0; top: 0; pointer-events: none; }
 #floats { position: absolute; inset: 0; pointer-events: none; }
 .float { position: absolute; pointer-events: auto; }
+/* GP の提案の上の小さな ✓ ×（T-0647）。箱の右上の外に、半透明で。選んだ提案と、触っている間は濃く */
+#gpbtns { position: absolute; left: 0; top: 0; pointer-events: none; }
+.gpb { position: absolute; display: flex; gap: 1px; transform: translate(-100%, -100%); padding-bottom: 1px; pointer-events: auto; opacity: .55; }
+.gpb:hover, .gpb.on { opacity: 1; }
+.gpb button { width: 15px; height: 15px; padding: 0; border: 1px solid rgba(15,23,42,.35); border-radius: 3px; background: rgba(255,255,255,.85); font-size: 11px; line-height: 13px; cursor: pointer; color: #0f172a; }
+.gpb button.ok:hover { background: #16a34a; color: #fff; border-color: #15803d; }
+.gpb button.ng:hover { background: #dc2626; color: #fff; border-color: #b91c1c; }
 .float.dock { left: 50% !important; top: auto !important; bottom: 40px; transform: translateX(-50%); max-width: calc(100% - 32px); }
 .hint { position: absolute; left: 8px; bottom: 8px; background: rgba(15,23,42,.82); color: #fff; padding: 4px 10px; border-radius: 6px; font-size: 12px; pointer-events: none; max-width: 70%; }
 
