@@ -25,7 +25,7 @@ Itera の AI（エンジン）に、次の道具を公開します（`MetaOS.too
 | `hiroi_annotate page= bbox= kind= title= note=` | 図面の上に注釈（読みどころ）を囲う。人が囲うのと同じもの |
 | `hiroi_crop annotation= page= dpi=` | 注釈の切り抜き（既定 300 dpi。大きければ 1536 px のタイル）を VFS に書き、パスを返す |
 | `hiroi_palette part= q=` | パレットの中身（id 付き）。categories / labels / rules / expected / systems / notes |
-| `hiroi_apply` | 編集の塊（図面解析の応答と同じ JSON）を入れる。`core/analysis.js` の `apply`。履歴 1 行 |
+| `hiroi_apply` | 編集の塊（図面解析の応答と同じ JSON）を入れる。`core/analysis.js` の `apply`。履歴 1 行。**`edits`** で既にある項目を直せる（カテゴリの move / rename / merge / delete、ラベルの move / rename / delete。id か一意な名前で指す。足す前に走る） |
 | `hiroi_undo` | 最後の編集を元に戻す |
 | `hiroi_open path=` | VFS の PDF を開く |
 | `hiroi_show screen= page=` | 画面（タブ・ページ）を切り替える |
@@ -34,6 +34,8 @@ Itera の AI（エンジン）に、次の道具を公開します（`MetaOS.too
 AI が書いたものは `by: "llm"` を持ちます（図面解析と同じ）。AI が承認した提案の箱は `by: "gp"` です。
 
 GP の特徴抽出器（ONNX・3.7 MB）は、VFS の `data/apps/hiroi-tool/gp_features_v1.onnx`（無ければ `system/demo/hiroi/model/`）から読みます。どちらにも無ければ、ホストのオリジンの `/demo/hiroi/gp_features_v1.onnx` を `MetaOS.net.download` で落として VFS に置きます（配信物の `public/demo/hiroi/` に置く）。
+
+木の形（T-0647）: GP は形（凡例の記号）で探し、層の規則は製品（葉）で絞るので、「記号 ＝ 中間ノード、その下に製品」の形でないと規則が効きません。AI が記号と型番を同じ段に並べてしまったら `edits` の `move` で直します。`hiroi_detect search` の戻りと拾いの板に、葉が並びすぎているときの手がかり（`core/analysis.js` の `treeHint`）が出ます。
 
 典型的な流れ: `hiroi_status` → `hiroi_page`（表の場所を見る）→ `hiroi_annotate`（器具表を囲う）→ `hiroi_crop` → 画像を読む → `hiroi_apply`（その表の分）→ 次の注釈へ。利用者が「この部屋の規則を直して」と言えば、同じ `hiroi_apply` で直せます。
 

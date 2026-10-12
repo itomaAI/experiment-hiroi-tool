@@ -3395,6 +3395,8 @@
       box.append(h('div', { class: 'acts' }, h('button', { class: 'primary', disabled: cat === 'cat-root' || !exemplars ? '' : null, onclick: () => { gpSearch(cat, pg.id); renderAll(); } }, '探す'), h('label', { class: 'muted' }, '閾値 ', h('input', { type: 'range', min: 0.3, max: 0.95, step: 0.05, value: app.gp.threshold, style: 'width:90px;vertical-align:middle', oninput: (e) => { app.gp.threshold = Number(e.target.value); renderAll(); } }), ' ' + Math.round(app.gp.threshold * 100) + '%'), h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: app.gp.auto ? '' : null, onchange: (e) => { app.gp.auto = e.target.checked; } }), ' 箱を置いたら探す')));
     }
     if (st.status === 'ready') box.append(h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: app.gp.recompute ? '' : null, onchange: (e) => { app.gp.recompute = e.target.checked; } }), ' 決めるたびに探し直す'));
+    const hint = catName && self.SMA && self.SMA.treeHint ? self.SMA.treeHint(pal, cat) : null;
+    if (hint) box.append(h('div', { class: 'muted', style: 'margin:4px 0; color:#b45309' }, '木の形: ' + hint));
     if (here.length) {
       const byCat = {};
       for (const p of shown) byCat[p.category] = (byCat[p.category] || 0) + 1;
