@@ -400,12 +400,20 @@ Content: JSON。図面解析の応答と同じ形。要る鍵だけでよい:
     "rules":      [{ "label": "l1", "category": "c1", "candidates": ["c2"], "source": ["an-0001"] }],
     "expected":   [{ "labels": ["l1"], "category": "c2", "count": 4, "source": ["an-0001"] }],
     "systems":    [{ "name": "1A2", "from": "キュービクル", "to": "L1-1", "category": "c5", "text": "CVT 100 E14×2 (G82)" }],
-    "notes":      [{ "kind": "注意", "text": "…", "pages": [36], "source": ["an-0002"] }]
+    "notes":      [{ "kind": "注意", "text": "…", "pages": [36], "source": ["an-0002"] }],
+    "edits":      [{ "op": "move",   "category": "ct-0012", "parent": "ct-0003" },
+                   { "op": "rename", "category": "ct-0012", "name": "GS100", "spec": "LED DL 100形" },
+                   { "op": "merge",  "category": "ct-0015", "into": "ct-0012" },
+                   { "op": "delete", "category": "ct-0015" },
+                   { "op": "move",   "label": "lb-0007", "parent": "lb-0002" }]
   }
   - key / parent / tree / label / category / candidates / owner / material は、この JSON の中の key で指す。親は同じ JSON に入れる（無ければ根の下に置かれる）
   - 同じ親の下の同じ名前は、いまあるものを使う（増えない）。既存の項目を指すには、その名前で同じ親の下に書く
   - size は "個数" か "長さ"。kind は 注意／決まり／疑問／その他。source は注釈の id かページ（"p.36"）
-Returns: 入れた数（ページ・カテゴリ 追加/再利用・ラベル・構成・規則・見込み・系統・覚え書き）と知らせ。
+  - **edits は既にある項目を直す**（足す前に走る）。項目は id（hiroi_palette が出す ct-… / lb-…）か、パレットの中で一意な名前で指す。
+    category: move（parent へ。"root" で根の下）/ rename（name・spec）/ merge（into へ統合。子・箱・規則・構成・見込み・系統の参照を付け替えてから消す）/ delete（箱が使っていれば拒む）。label: move / rename / delete。
+    凡例の記号と型番を同じ段に並べてしまったときは、記号を中間ノードにして型番を move でその下へ（層の規則と GP はこの形で効く）
+Returns: 入れた数（ページ・カテゴリ 追加/再利用・ラベル・構成・規則・見込み・系統・覚え書き・直した数）と知らせ。
 Note: 一度に全部を書こうとしない。注釈 1 つ読んだら、その分だけ入れる。
 </define_tag>`,
       hiroi_annotate: `<define_tag name="hiroi_annotate">
@@ -488,7 +496,8 @@ Note: 手本が無ければ search は探せない —— まず利用者に箱�
         const sum = edit('AI の編集', (S) => A.apply(S, raw, {}));
         if (!sum) throw new Error('入れられなかった');
         saveJob();
-        return '入れた: ページ ' + sum.pages + '・カテゴリ +' + sum.categories.added + '（再利用 ' + sum.categories.reused + '）・ラベル +' + sum.labels.added + '（再利用 ' + sum.labels.reused + '）・構成 ' + sum.components + '・規則 ' + sum.rules + '・見込み ' + sum.expected + '・系統 ' + sum.systems + '・覚え書き ' + sum.notes + (sum.warnings.length ? '\n知らせ:\n' + sum.warnings.map((w) => '  - ' + w).join('\n') : '');
+        const ed = sum.edits && (sum.edits.done || sum.edits.failed) ? '・直した ' + sum.edits.done + (sum.edits.failed ? '（できなかった ' + sum.edits.failed + '）' : '') : '';
+        return '入れた: ページ ' + sum.pages + '・カテゴリ +' + sum.categories.added + '（再利用 ' + sum.categories.reused + '）・ラベル +' + sum.labels.added + '（再利用 ' + sum.labels.reused + '）・構成 ' + sum.components + '・規則 ' + sum.rules + '・見込み ' + sum.expected + '・系統 ' + sum.systems + '・覚え書き ' + sum.notes + ed + (sum.warnings.length ? '\n知らせ:\n' + sum.warnings.map((w) => '  - ' + w).join('\n') : '');
       },
       async hiroi_annotate(p) {
         const pg = pageByNumber(Number(p.page));
@@ -544,7 +553,8 @@ Note: 手本が無ければ search は探せない —— まず利用者に箱�
           }
           const list = store.proposalsOn(pg.id).filter((pr) => pr.category === cat.id && pr.score >= thr).sort((a, b) => b.score - a.score);
           saveJob();
-          return '「' + cat.name + '」の提案 p.' + pg.index + ': ' + list.length + '（閾値 ' + Math.round(thr * 100) + '%・全 ' + n + '）' + (list.length ? '\n' + list.map(fmt).join('\n') : '') + '\n利用者の画面に点線で出ている。承認は hiroi_detect action=approve（ids で選べる）';
+          const hint = A.treeHint ? A.treeHint(P(), cat.id) : null;
+          return '「' + cat.name + '」の提案 p.' + pg.index + ': ' + list.length + '（閾値 ' + Math.round(thr * 100) + '%・全 ' + n + '）' + (list.length ? '\n' + list.map(fmt).join('\n') : '') + '\n利用者の画面に点線で出ている（画面はいま選んでいるカテゴリの提案だけを見せる）。承認は hiroi_detect action=approve（ids で選べる）' + (hint ? '\n木の形: ' + hint : '');
         }
         if (action === 'approve' || action === 'reject') {
           const cat = p.category ? categoryByRef(p.category) : null;

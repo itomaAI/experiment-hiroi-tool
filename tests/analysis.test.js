@@ -168,3 +168,58 @@ test('途中で切れた応答: 最後の閉じた項目までで閉じて読む
   assert.deepStrictEqual(A.normalize(sv.json).systems, []);
   assert.strictEqual(A.salvage('{"pages": [{"page": 1, "ti'), null);
 });
+
+test('edits: 既にある項目を直す — move / rename / merge / delete。箱が使っていれば delete は拒む（T-0647）', () => {
+  const s = blankStore(1);
+  // LLM が凡例の記号（丸DL）と型番（GS100・GS150）を同じ段に並べてしまった木
+  s.commit('足す', (st, S) => A.apply(S, {
+    categories: [
+      { key: 'c1', name: '照明器具', parent: null, size: '個数' },
+      { key: 'c2', name: '丸DL', parent: 'c1' },
+      { key: 'c3', name: 'GS100', parent: 'c1', spec: 'LED DL 100形' },
+      { key: 'c4', name: 'GS150', parent: 'c1' },
+      { key: 'c5', name: 'GS100（旧）', parent: 'c1' }, // 同じ型番をもう 1 つ作ってしまった
+    ],
+    label_trees: [{ key: 't', name: '部屋' }],
+    labels: [{ key: 'l1', name: '事務室', tree: 't' }],
+    rules: [{ label: 'l1', category: 'c1', candidates: ['c3', 'c5'] }],
+    expected: [{ labels: ['l1'], category: 'c5', count: 3 }],
+  }, {}));
+  const byName = (n) => s.palette.categories.find((c) => c.name === n); // s.palette は編集のたびに取り直す（写し）
+  const gs100 = byName('GS100');
+  const dup = byName('GS100（旧）');
+  let pal;
+  assert.ok(dup);
+  // 箱が 1 つ、重複の側を使っている
+  s.commit('箱', (st, S) => S.addBox('pg-001', dup.id, [10, 10, 8, 8]));
+  // delete は箱が使っていれば拒む
+  let sum = s.commit('直す', (st, S) => A.apply(S, { edits: [{ op: 'delete', category: dup.id }] }, {}));
+  assert.strictEqual(sum.edits.failed, 1);
+  assert.ok(/箱が 1 使っている/.test(sum.warnings[0]), sum.warnings[0]);
+  // merge → 箱・規則・見込みの参照が GS100 へ移り、重複は消える。move → 型番を記号の下へ。rename → spec
+  sum = s.commit('直す', (st, S) => A.apply(S, { edits: [
+    { op: 'merge', category: dup.id, into: 'GS100' },
+    { op: 'move', category: 'GS100', parent: '丸DL' },
+    { op: 'move', category: byName('GS150').id, parent: byName('丸DL').id },
+    { op: 'rename', category: '丸DL', name: '○ ダウンライト', spec: '凡例の記号' },
+    { op: 'move', label: '事務室', parent: null },
+    { op: 'delete', category: '無いもの' },
+  ] }, {}));
+  assert.strictEqual(sum.edits.done, 5, sum.warnings.join('\n'));
+  assert.strictEqual(sum.edits.failed, 1);
+  assert.ok(/が無い/.test(sum.warnings[0]), sum.warnings[0]);
+  pal = s.palette;
+  assert.strictEqual(pal.categories.filter((c) => c.name === 'GS100').length, 1);
+  assert.deepStrictEqual(pal.categoryPath(gs100.id), ['拾えるもの（根）', '照明器具', '○ ダウンライト', 'GS100']);
+  assert.deepStrictEqual(pal.categoryPath(byName('GS150').id), ['拾えるもの（根）', '照明器具', '○ ダウンライト', 'GS150']);
+  assert.strictEqual(byName('○ ダウンライト').note, '凡例の記号');
+  assert.strictEqual(s.state.pickups[0].category, gs100.id, '箱は GS100 に付け替わる');
+  const l = pal.labels.find((x) => x.name === '事務室');
+  assert.strictEqual(l.parent, null, 'ラベルは森の一番上へ');
+  assert.deepStrictEqual(l.rules[0].candidates, [gs100.id], '規則の候補は 1 つに畳まれる');
+  assert.strictEqual(s.state.palette.expected[0].category, gs100.id, '見込みも付け替わる');
+  // 足すときは、直したあとの木を名前で指せる（丸DL の下の GS100 は再利用）
+  sum = s.commit('足す', (st, S) => A.apply(S, { categories: [{ key: 'a', name: '照明器具', parent: null }, { key: 'b', name: '○ ダウンライト', parent: 'a' }, { key: 'c', name: 'GS100', parent: 'b' }] }, {}));
+  assert.strictEqual(sum.categories.added, 0);
+  assert.strictEqual(sum.categories.reused, 3);
+});

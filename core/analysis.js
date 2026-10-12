@@ -589,7 +589,121 @@
       expected: arr(r.expected).filter((e) => clean(e.category) && Number.isFinite(Number(e.count))).map((e) => ({ labels: srcOf(e.labels), category: clean(e.category), count: Number(e.count), source: srcOf(e.source) })),
       systems: arr(r.systems).filter((x) => clean(x.name) || clean(x.from) || clean(x.to)).map((x) => ({ name: clean(x.name), from: clean(x.from), to: clean(x.to), category: clean(x.category), text: clean(x.text), source: srcOf(x.source) })),
       notes: arr(r.notes).filter((n) => clean(n.text)).map((n) => ({ kind: A.NOTE_KINDS.includes(n.kind) ? n.kind : 'その他', text: clean(n.text), pages: Array.isArray(n.pages) ? n.pages.map(Number).filter(Number.isInteger) : [], source: srcOf(n.source) })),
+      edits: arr(r.edits).filter((e) => clean(e.op)).map((e) => ({ op: clean(e.op), category: clean(e.category), label: clean(e.label), parent: e.parent === null ? null : clean(e.parent), into: clean(e.into), name: clean(e.name), spec: clean(e.spec), before: clean(e.before) })),
     };
+  };
+
+  /*
+   * 既にある項目を直す（T-0647。apply は足すだけで、LLM が一度作った木を直せなかった）。
+   * edits: [{ op, category | label, parent, into, name, spec, before }]。項目は id（hiroi_palette が出す）か、パレットの中で一意な名前で指す。
+   *   category: move（parent へ。null / "root" で根の下）/ rename（name・spec）/ merge（into へ。子・箱・規則・構成・見込み・系統の参照を付け替えてから消す）/ delete（箱が使っていれば拒む）
+   *   label:    move（parent へ。null で森の一番上）/ rename / delete（層が使っていれば拒む）
+   * 返すもの: { done, failed }。失敗は warn(文) に 1 行ずつ
+   */
+  /*
+   * GP を回すカテゴリの木の形を見る（T-0647 案 B）。GP は形（凡例の記号）で探し、層の規則は製品（葉）で絞るので、
+   * 「記号 ＝ 中間ノード、その下に製品」の形でないと規則が効かない。LLM は記号と製品を同じ段に並べがち。
+   * 返すもの: 文（手がかりが要るとき）か null。葉で、同じ親の下に葉が 3 つ以上並び、パレットに規則があるときだけ
+   */
+  A.treeHint = function (pal, catId) {
+    const cats = pal.categories;
+    const c = cats.find((x) => x.id === catId);
+    if (!c || c.parent === null) return null;
+    if (cats.some((x) => x.parent === c.id)) return null;
+    const sibs = cats.filter((x) => x.parent === c.parent && !cats.some((y) => y.parent === x.id));
+    if (sibs.length < 3) return null;
+    if (!pal.labels.some((l) => (l.rules || []).length)) return null;
+    const par = cats.find((x) => x.id === c.parent);
+    return '「' + c.name + '」は葉で、「' + (par ? par.name : '') + '」の下に葉が ' + sibs.length + ' つ並んでいる。GP は形（凡例の記号）で探すので、同じ記号の製品が複数あるなら、記号を中間ノードにして製品をその下に置く（hiroi_apply の edits: move）と、層の規則で製品が決まる';
+  };
+
+  A.applyEdits = function (S, edits, warn) {
+    const st = S.state;
+    const res = { done: 0, failed: 0 };
+    const w = warn || (() => {});
+    const find = (list, ref, what) => {
+      if (!ref) return null;
+      const byId = list.find((x) => x.id === ref);
+      if (byId) return byId;
+      const hits = list.filter((x) => norm(x.name) === norm(ref));
+      if (hits.length === 1) return hits[0];
+      if (hits.length > 1) throw new Error(what + '「' + ref + '」は ' + hits.length + ' つある。id で指す（hiroi_palette で見る）');
+      throw new Error(what + '「' + ref + '」が無い');
+    };
+    const relinkCategory = (from, to) => {
+      // from を指しているものを to へ
+      for (const p of st.pickups) {
+        if (p.category === from) p.category = to;
+        if (p.chosen === from) p.chosen = to;
+      }
+      for (const l of st.palette.labels) {
+        if (!l.rules) continue;
+        for (const r of l.rules) {
+          if (r.category === from) r.category = to;
+          r.candidates = [...new Set(r.candidates.map((c) => (c === from ? to : c)))];
+        }
+      }
+      for (const c of st.palette.categories) if (c.components) for (const k of c.components) if (k.material === from) k.material = to;
+      for (const e of st.palette.expected || []) if (e.category === from) e.category = to;
+      for (const s of st.palette.systems || []) if (s.category === from) s.category = to;
+      for (const pr of st.proposals || []) if (pr.category === from) pr.category = to;
+      for (const r of st.rejections || []) if (r.category === from) r.category = to;
+    };
+    for (const e of edits) {
+      try {
+        if (e.category) {
+          const cats = st.palette.categories;
+          const c = find(cats, e.category, 'カテゴリ');
+          if (e.op === 'move') {
+            const root = cats.find((x) => x.parent === null);
+            const p = e.parent === null || e.parent === 'root' || e.parent === '根' ? root : find(cats, e.parent, 'カテゴリ');
+            if (!p) throw new Error('親が要る');
+            const before = e.before ? find(cats, e.before, 'カテゴリ').id : undefined;
+            S.moveCategory(c.id, p.id, before);
+          } else if (e.op === 'rename') {
+            const patch = {};
+            if (e.name) patch.name = e.name;
+            if (e.spec) patch.note = e.spec;
+            if (!Object.keys(patch).length) throw new Error('name か spec が要る');
+            S.updateCategory(c.id, patch);
+          } else if (e.op === 'merge') {
+            const t = find(cats, e.into, 'カテゴリ');
+            if (t.id === c.id) throw new Error('自分には統合できない');
+            if (c.parent === null) throw new Error('根は統合できない');
+            const under = (id, anc) => { let x = cats.find((y) => y.id === id); while (x && x.parent) { if (x.parent === anc) return true; x = cats.find((y) => y.id === x.parent); } return false; };
+            if (under(t.id, c.id)) throw new Error('「' + t.name + '」は「' + c.name + '」の下にある（先に動かす）');
+            for (const k of cats.filter((x) => x.parent === c.id)) S.moveCategory(k.id, t.id);
+            relinkCategory(c.id, t.id);
+            if (!t.note && c.note) t.note = c.note;
+            const r = S.removeCategoryTree(c.id);
+            if (!r.ok) throw new Error('統合のあと消せなかった');
+          } else if (e.op === 'delete') {
+            const r = S.removeCategoryTree(c.id);
+            if (!r.ok) throw new Error(r.root ? '根は消せない' : '箱が ' + (r.pickups || []).length + ' 使っている（merge で付け替えるか、利用者に頼む）');
+          } else throw new Error('op は move / rename / merge / delete');
+        } else if (e.label) {
+          const labs = st.palette.labels;
+          const l = find(labs, e.label, 'ラベル');
+          if (e.op === 'move') {
+            const p = e.parent === null || e.parent === 'root' ? null : find(labs, e.parent, 'ラベル');
+            const before = e.before ? find(labs, e.before, 'ラベル').id : undefined;
+            S.moveLabel(l.id, p ? p.id : null, before);
+          } else if (e.op === 'rename') {
+            if (!e.name) throw new Error('name が要る');
+            S.renameLabel(l.id, e.name);
+          } else if (e.op === 'delete') {
+            const r = S.removeLabelTree(l.id);
+            if (!r.ok) throw new Error('層が ' + r.used + ' 使っている');
+          } else throw new Error('ラベルの op は move / rename / delete');
+        } else throw new Error('category か label が要る');
+        res.done++;
+      } catch (err) {
+        res.failed++;
+        w('edits ' + e.op + (e.category || e.label ? '（' + (e.category || e.label) + '）' : '') + ': ' + err.message);
+      }
+    }
+    if (res.done) S.touchPalette();
+    return res;
   };
 
   /*
@@ -603,11 +717,14 @@
     const r = A.normalize(raw);
     const st = S.state;
     A.ensure(st);
-    const sum = { pages: 0, categories: { added: 0, reused: 0 }, labels: { added: 0, reused: 0 }, components: 0, rules: 0, expected: 0, systems: 0, notes: 0, warnings: [] };
+    const sum = { pages: 0, categories: { added: 0, reused: 0 }, labels: { added: 0, reused: 0 }, components: 0, rules: 0, expected: 0, systems: 0, notes: 0, edits: { done: 0, failed: 0 }, warnings: [] };
     const warn = (t) => {
       if (sum.warnings.length < 50) sum.warnings.push(t);
     };
     const run = o.run || null;
+
+    /* ---- 直す（足す前に。足すものは直したあとの木を名前で指せる） ---- */
+    if (r.edits.length) sum.edits = A.applyEdits(S, r.edits, warn);
 
     /* ---- ページ ---- */
     const allowPages = o.pages ? new Set(o.pages) : null;
